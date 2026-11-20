@@ -1,0 +1,78 @@
+# Example for a site that lives from ads and asks for consent: a news site, a magazine,
+# a blog. Copy it as script-auditor.yml next to your workflow and replace the pages.
+#
+# Pick one page per kind of third-party embed the site has: the front page, a free and a
+# paywalled article, pages with video, podcasts, widgets or games, forms (newsletter, job
+# market), login and checkout. A page that stops existing shows up as a problem in the
+# alert channel, so prefer pages that stay online.
+pages:
+  - url: https://www.example.com/
+    name: Front page
+  - url: https://www.example.com/news/a-free-article
+    name: Article
+  - url: https://www.example.com/news/a-paywalled-article
+    name: Article (paywall)
+  - url: https://www.example.com/podcast/an-episode
+    name: Podcast
+  - url: https://www.example.com/games
+    name: Games
+  - url: https://www.example.com/newsletter
+    name: Newsletter
+  - url: https://www.example.com/login
+    name: Login
+
+# Subdomains count as first party too (shop.example.com, account.example.com)
+firstPartyDomains: [example.com]
+
+consent:
+  # The "accept all" button of the consent banner, for example:
+  #   OneTrust  '#onetrust-accept-btn-handler'
+  #   Cookiebot '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll'
+  #   OpenCMP   '.cmp-button-accept-all'
+  # The button must be part of the page (shadow DOM is fine); banners rendered inside an
+  # iframe cannot be clicked yet.
+  selector: '#onetrust-accept-btn-handler'
+
+crawl:
+  # The language and time zone of your visitors
+  locale: en-GB
+  timezone: Europe/London
+
+hosts:
+  # The ad auction loads different bidders on every page view, so a never-seen ad host is
+  # normal and does not alert. Their scripts are still recorded and reviewed, and a
+  # suspicious or malicious verdict alerts like for any other host.
+  quiet:
+    - '*.doubleclick.net'
+    - '*.googlesyndication.com'
+    - '*.googletagservices.com'
+    - '*.adtrafficquality.google'
+    - '*.amazon-adsystem.com'
+    - '*.id5-sync.com'
+    - '*.4dex.io'
+    - '*.fastclick.net'
+    - '*.pubmatic.com'
+    - '*.rubiconproject.com'
+    - '*.adnxs.com'
+    - '*.smartadserver.com'
+    - '*.adform.net'
+    - '*.criteo.com'
+    - '*.criteo.net'
+    - '*.casalemedia.com'
+    - '*.outbrain.com'
+    - '*.outbrainimg.com'
+    # Video ads (Google IMA SDK)
+    - imasdk.googleapis.com
+    - '*.2mdn.net'
+
+llm:
+  provider: openai
+  model: gpt-5-mini
+
+notify:
+  - type: slack
+    webhookUrlEnv: SLACK_WEBHOOK_URL
+    on: [alert, error]
+
+site:
+  title: Script Auditor – example.com

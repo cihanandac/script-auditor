@@ -1,0 +1,56 @@
+# script-auditor configuration. Everything except `pages` is optional; the values shown
+# are the defaults unless marked as an example.
+
+# Pages to audit, visited in this order in one browser session. Pick one page per kind of
+# embed: home page, an article, checkout, login, pages with widgets or games.
+pages:
+  - https://www.example.com/
+  - url: https://www.example.com/checkout
+    name: Checkout
+
+# Your own domains, subdomains included. Their scripts are not audited.
+# Default: the last two labels of each page's host (example.com).
+# firstPartyDomains: [example.com, example-cdn.net]
+
+consent:
+  # CSS selector of the "accept all" button of your consent banner. Shadow DOM is pierced.
+  # Accepting makes the auditor see the scripts that only load after consent.
+  selector: '' # example: '#onetrust-accept-btn-handler'
+  timeoutSeconds: 15
+
+crawl:
+  locale: en-US
+  timezone: UTC
+  settleSeconds: 5
+  # Appended to the user agent; filter it out in your analytics
+  userAgentSuffix: ScriptAuditor/0.1
+
+hosts:
+  # Hosts whose first appearance should not alert, e.g. ad auction bidders that rotate.
+  # Their scripts are still reviewed when they change.
+  quiet: [] # example: ['*.doubleclick.net', '*.amazon-adsystem.com']
+  # Script URLs generated per request whose content changes should be ignored.
+  ignoreContentChanges: []
+
+llm:
+  provider: openai # or none: only record changes
+  model: gpt-5-mini
+  apiKeyEnv: OPENAI_API_KEY
+  # baseUrl: https://my-openai-compatible-endpoint/v1
+  maxReviewsPerRun: 40
+  # Also review every script found on the very first run
+  reviewBaseline: false
+
+alerts:
+  minVerdict: suspicious # or malicious
+  newHosts: true
+
+notify:
+  - type: slack
+    webhookUrlEnv: SLACK_WEBHOOK_URL
+    on: [alert, error] # add `change` to hear about every script change
+
+site:
+  title: Script Auditor
+  # Public URL of the status site, for links in notifications
+  # url: https://OWNER.github.io/REPOSITORY/
