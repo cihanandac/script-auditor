@@ -128,8 +128,7 @@ export async function analyze(
     return { ...base, kind: 'new', literalOnly: false, excerpt: text, omitted };
   }
 
-  const literalOnly =
-    addedHosts.length === 0 && normalizeLiterals(oldCode) === normalizeLiterals(newCode);
+  const literalOnly = isLiteralOnlyChange(oldCode, newCode);
   const [oldPretty, newPretty] = await Promise.all([beautify(oldCode), beautify(newCode)]);
   const patch = structuredPatch('old.js', 'new.js', oldPretty, newPretty, '', '', {
     context: 3,
@@ -175,6 +174,15 @@ export function hostsInCode(code: string): Set<string> {
     }
   }
   return hosts;
+}
+
+/** Only numbers and long id-like tokens differ, and the new code references no new host. */
+export function isLiteralOnlyChange(oldCode: string, newCode: string): boolean {
+  if (normalizeLiterals(oldCode) !== normalizeLiterals(newCode)) {
+    return false;
+  }
+  const oldHosts = hostsInCode(oldCode);
+  return [...hostsInCode(newCode)].every((host) => oldHosts.has(host));
 }
 
 /**
