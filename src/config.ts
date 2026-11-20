@@ -59,6 +59,8 @@ export const configSchema = z.object({
     .prefault({}),
   crawl: z
     .object({
+      /** Pages scanned at the same time, as tabs of one browser session. */
+      concurrency: z.number().int().min(1).max(8).default(3),
       pageTimeoutSeconds: z.number().positive().default(45),
       scrollStepPixels: z.number().int().positive().default(800),
       maxScrollSteps: z.number().int().nonnegative().default(30),

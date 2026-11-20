@@ -73,11 +73,33 @@ export const crawl: Crawler = async (config, options = {}) => {
     // The default buffer of 250 entries overflows on pages with ad auctions
     await context.addInitScript(() => performance.setResourceTimingBufferSize(10_000));
     await options.contextHook?.(context);
-    const page = await context.newPage();
-    page.setDefaultTimeout(config.crawl.pageTimeoutSeconds * 1000);
-    for (const [index, target] of config.pages.entries()) {
-      result.pages.push(await scanPage(page, target, index === 0, config, result));
+    const openPage = async () => {
+      const page = await context.newPage();
+      page.setDefaultTimeout(config.crawl.pageTimeoutSeconds * 1000);
+      return page;
+    };
+
+    // The first page alone, to accept the consent; the rest in parallel tabs of the same
+    // session, which share the consent cookie
+    const scans: PageScan[] = [];
+    const firstPage = await openPage();
+    scans[0] = await scanPage(firstPage, config.pages[0]!, true, config, result);
+    // If the first page failed, the banner could not be accepted there: keep waiting for it
+    const waitForBanner = !result.consentAccepted && scans[0].error !== undefined;
+    let next = 1;
+    const work = async (page: PlaywrightPage) => {
+      while (next < config.pages.length) {
+        const index = next++;
+        scans[index] = await scanPage(page, config.pages[index]!, waitForBanner, config, result);
+      }
+    };
+    const tabs = Math.min(config.crawl.concurrency, config.pages.length - 1);
+    const workers = [work(firstPage)];
+    for (let tab = 1; tab < tabs; tab++) {
+      workers.push(work(await openPage()));
     }
+    await Promise.all(workers);
+    result.pages = scans;
   } finally {
     await browser.close();
   }
@@ -98,7 +120,7 @@ async function userAgent(browser: Browser, suffix: string): Promise<string> {
 async function scanPage(
   page: PlaywrightPage,
   target: Page,
-  first: boolean,
+  waitForBanner: boolean,
   config: Config,
   result: CrawlResult,
 ): Promise<PageScan> {
@@ -127,10 +149,6 @@ async function scanPage(
     if (response && response.status() >= 400) {
       throw new Error(`HTTP ${response.status()}`);
     }
-    // Wait for the banner on the first page, and on later ones as long as every earlier
-    // page failed to load and so could not have shown it
-    const waitForBanner =
-      first || (!result.consentAccepted && result.pages.every((scanned) => scanned.error));
     await acceptConsent(page, waitForBanner, config, result);
     await waitForLoad(page, config);
     await scrollToBottom(page, config);
