@@ -1,0 +1,6 @@
+dist/
+coverage/
+.script-auditor-data/
+site/
+package-lock.json
+test/fixtures/

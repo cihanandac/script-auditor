@@ -1,0 +1,39 @@
+{
+  "name": "script-auditor",
+  "version": "0.1.0",
+  "description": "Watches the third-party JavaScript your pages load, reviews every change with an LLM and alerts on suspicious ones.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "script-auditor": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run typecheck && npm run format:check && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  },
+  "dependencies": {
+    "diff": "9.0.0",
+    "openai": "7.52.0",
+    "playwright": "1.65.0",
+    "prettier": "3.9.10",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  }
+}

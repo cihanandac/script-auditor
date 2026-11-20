@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+# local runs
+.script-auditor-data/
+site/
+*.log
+.DS_Store
+.env
