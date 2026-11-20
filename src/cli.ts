@@ -4,7 +4,8 @@
  * script-auditor inventory  crawl once and print the third-party scripts per page
  * script-auditor site       rebuild the status site from the stored state
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { runUrlFromEnv, writeJobSummary } from './ci.js';
 import type { Config } from './config.js';
@@ -201,7 +202,19 @@ function version(): string {
   return pkg.version;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('/cli.js')) {
+/** True when this file is the program, also when started through the npm bin symlink. */
+function isEntryPoint(): boolean {
+  if (!process.argv[1]) {
+    return false;
+  }
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   main().then((code) => {
     process.exitCode = code;
   });
