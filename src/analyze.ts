@@ -1,0 +1,307 @@
+/**
+ * Prepares a new or changed script for review: readable code, a diff against the previous
+ * version, risk indicators and the hosts the code talks to. Everything an LLM needs to judge
+ * the change, cut down to a size budget with the riskiest parts first.
+ */
+import { structuredPatch, type StructuredPatchHunk } from 'diff';
+import { format } from 'prettier';
+
+export interface IndicatorPattern {
+  name: string;
+  label: string;
+  pattern: RegExp;
+}
+
+/** Things skimmers, loaders and miners need. A change in their count is worth a look. */
+export const INDICATORS: IndicatorPattern[] = [
+  {
+    name: 'dynamic-code',
+    label: 'eval / new Function / string timers',
+    pattern: /\beval\s*\(|\bnew\s+Function\s*\(|\bset(?:Timeout|Interval)\s*\(\s*["'`]/g,
+  },
+  {
+    name: 'encoding',
+    label: 'atob / btoa / fromCharCode / unescape',
+    pattern: /\b(?:atob|btoa)\s*\(|String\.fromCharCode|\bunescape\s*\(/g,
+  },
+  { name: 'cookies', label: 'document.cookie', pattern: /document\.cookie/g },
+  {
+    name: 'storage',
+    label: 'localStorage / sessionStorage / indexedDB',
+    pattern: /\b(?:localStorage|sessionStorage|indexedDB)\b/g,
+  },
+  {
+    name: 'network',
+    label: 'fetch / XHR / sendBeacon / WebSocket',
+    pattern:
+      /\bfetch\s*\(|\bXMLHttpRequest\b|\bsendBeacon\s*\(|\bnew\s+WebSocket\s*\(|\bEventSource\b/g,
+  },
+  {
+    name: 'script-injection',
+    label: 'injects scripts or HTML',
+    pattern:
+      /createElement\s*\(\s*["'`](?:script|iframe)["'`]|document\.write(?:ln)?\s*\(|insertAdjacentHTML|\.innerHTML\s*=|\.outerHTML\s*=/gi,
+  },
+  {
+    name: 'form-access',
+    label: 'reads forms, inputs or keystrokes',
+    pattern:
+      /addEventListener\s*\(\s*["'`](?:submit|input|change|keydown|keyup|keypress|paste|blur)["'`]|type\s*=\s*\\?["']?password|querySelectorAll?\s*\(\s*["'`][^"'`]*\b(?:input|form|select|textarea)\b/gi,
+  },
+  {
+    name: 'payment-data',
+    label: 'card / CVV / IBAN fields',
+    pattern: /\b(?:card[_-]?(?:number|holder)|cc[_-]?(?:num|number)|cvv|cvc|iban|expiry)\b/gi,
+  },
+  {
+    name: 'redirect',
+    label: 'changes location',
+    pattern:
+      /\b(?:window|document|top|self)\.location(?:\.href)?\s*=[^=]|location\.(?:replace|assign)\s*\(/g,
+  },
+  {
+    name: 'crypto-mining',
+    label: 'WebAssembly / mining',
+    pattern: /WebAssembly\.(?:instantiate|compile)|coinhive|cryptonight|stratum\+tcp/gi,
+  },
+  {
+    name: 'obfuscation',
+    label: '_0x names, hex escapes, long encoded strings',
+    pattern: /\b_0x[0-9a-f]{4,}\b|(?:\\x[0-9a-f]{2}){8,}|["'`][A-Za-z0-9+/]{300,}={0,2}["'`]/gi,
+  },
+];
+
+export interface IndicatorDelta {
+  name: string;
+  label: string;
+  old: number;
+  new: number;
+}
+
+export interface Analysis {
+  kind: 'new' | 'changed';
+  oldSize?: number;
+  newSize: number;
+  /** Indicators present in the new version or whose count changed. */
+  indicators: IndicatorDelta[];
+  /** Hosts the new version references that the old one did not (all hosts for new scripts). */
+  addedHosts: string[];
+  removedHosts: string[];
+  /** Only numbers and id-like tokens differ, and no host was added: nothing to review. */
+  literalOnly: boolean;
+  /** Excerpt for the reviewer: a unified diff, or the code of a new script. */
+  excerpt: string;
+  /** What the excerpt leaves out, in words; empty if it is complete. */
+  omitted: string;
+}
+
+export async function analyze(
+  newBody: Uint8Array,
+  oldBody: Uint8Array | undefined,
+  maxChars: number,
+): Promise<Analysis> {
+  const newCode = Buffer.from(newBody).toString('utf8');
+  const oldCode = oldBody ? Buffer.from(oldBody).toString('utf8') : undefined;
+  const newHosts = hostsInCode(newCode);
+  const oldHosts = oldCode === undefined ? new Set<string>() : hostsInCode(oldCode);
+  const addedHosts = [...newHosts].filter((host) => !oldHosts.has(host)).sort();
+  const removedHosts = [...oldHosts].filter((host) => !newHosts.has(host)).sort();
+  const newCounts = countIndicators(newCode);
+  const oldCounts = oldCode === undefined ? undefined : countIndicators(oldCode);
+  const indicators = INDICATORS.map(({ name, label }) => ({
+    name,
+    label,
+    old: oldCounts?.[name] ?? 0,
+    new: newCounts[name] ?? 0,
+  })).filter((delta) => delta.new > 0 || delta.old !== delta.new);
+
+  const base = {
+    newSize: newBody.length,
+    indicators,
+    addedHosts,
+    removedHosts,
+  };
+
+  if (oldCode === undefined) {
+    const pretty = await beautify(newCode);
+    const { text, omitted } = excerptOfCode(pretty, maxChars);
+    return { ...base, kind: 'new', literalOnly: false, excerpt: text, omitted };
+  }
+
+  const literalOnly =
+    addedHosts.length === 0 && normalizeLiterals(oldCode) === normalizeLiterals(newCode);
+  const [oldPretty, newPretty] = await Promise.all([beautify(oldCode), beautify(newCode)]);
+  const patch = structuredPatch('old.js', 'new.js', oldPretty, newPretty, '', '', {
+    context: 3,
+    timeout: 10_000,
+  });
+  const common = { ...base, kind: 'changed' as const, oldSize: oldBody?.length, literalOnly };
+  if (!patch) {
+    // Too different to diff in time, e.g. a rebuilt bundle: show the new code instead
+    const { text, omitted } = excerptOfCode(newPretty, maxChars);
+    return {
+      ...common,
+      excerpt: text,
+      omitted: `The versions are too different to diff; this is the new code. ${omitted}`.trim(),
+    };
+  }
+  const { text, omitted } = excerptOfHunks(patch.hunks, addedHosts, maxChars);
+  return { ...common, excerpt: text, omitted };
+}
+
+export function countIndicators(code: string): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const { name, pattern } of INDICATORS) {
+    counts[name] = code.match(pattern)?.length ?? 0;
+  }
+  return counts;
+}
+
+/** Host names in absolute and protocol-relative URLs of the code. */
+export function hostsInCode(code: string): Set<string> {
+  const hosts = new Set<string>();
+  for (const match of code.matchAll(
+    /(?:https?:|wss?:)?\/\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)(?=[/:?#"'`\\\s)]|$)/gi,
+  )) {
+    const host = match[1]!.toLowerCase();
+    // Skip things like "//www.w3.org" in SVG namespaces, they are not requests
+    if (/(?:^|\.)w3\.org$/.test(host)) {
+      continue;
+    }
+    // A name ending in a letter label, or an IPv4 address: an exfiltration endpoint that
+    // only changes digits must not pass as a literal-only change
+    if (/[a-z]/.test(host.split('.').pop()!) || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
+      hosts.add(host);
+    }
+  }
+  return hosts;
+}
+
+/**
+ * Replaces numbers and long id-like tokens, the parts that change on every request in
+ * dynamically generated scripts (timestamps, cache keys, request ids).
+ */
+export function normalizeLiterals(code: string): string {
+  return code
+    .replace(/\b[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*\b/g, (token) => (token.length >= 16 ? 'ID' : token))
+    .replace(/\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi, '0');
+}
+
+export async function beautify(code: string): Promise<string> {
+  try {
+    return await format(code, { parser: 'babel', printWidth: 120 });
+  } catch {
+    // Not parseable as JavaScript (or a syntax prettier does not know): line breaks at
+    // statement and block boundaries still give the diff something to work with
+    return code.replace(/([;{}])(?=\S)/g, '$1\n');
+  }
+}
+
+function excerptOfCode(code: string, maxChars: number): { text: string; omitted: string } {
+  if (code.length <= maxChars) {
+    return { text: code, omitted: '' };
+  }
+  // The start of the file plus the surroundings of every risky spot, in file order
+  const ranges: [number, number][] = [[0, Math.floor(maxChars * 0.25)]];
+  const radius = 600;
+  for (const { pattern } of INDICATORS) {
+    for (const match of code.matchAll(pattern)) {
+      ranges.push([Math.max(0, match.index - radius), match.index + match[0].length + radius]);
+    }
+  }
+  for (const match of code.matchAll(/(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/gi)) {
+    ranges.push([Math.max(0, match.index - radius), match.index + match[0].length + radius]);
+  }
+  const merged = mergeRanges(ranges);
+  const parts: string[] = [];
+  let used = 0;
+  let shown = 0;
+  for (const [start, end] of merged) {
+    const piece = code.slice(start, Math.min(end, code.length));
+    if (used + piece.length > maxChars) {
+      continue;
+    }
+    parts.push(start === 0 ? piece : `/* ... offset ${start} ... */\n${piece}`);
+    used += piece.length;
+    shown += piece.length;
+  }
+  const percent = Math.round((shown / code.length) * 100);
+  return {
+    text: parts.join('\n'),
+    omitted: `Only ${percent}% of the ${code.length} characters are shown: the start of the file and the code around risk indicators and URLs.`,
+  };
+}
+
+function excerptOfHunks(
+  hunks: StructuredPatchHunk[],
+  addedHosts: string[],
+  maxChars: number,
+): { text: string; omitted: string } {
+  const scored = segmentsOf(hunks).map((segment, index) => {
+    const added = segment.lines.filter((line) => line.startsWith('+')).join('\n');
+    let score = 0;
+    for (const host of addedHosts) {
+      if (added.includes(host)) {
+        score += 10;
+      }
+    }
+    for (const { pattern } of INDICATORS) {
+      score += (added.match(pattern)?.length ?? 0) * 3;
+    }
+    return { index, score, text: `${segment.header}\n${segment.lines.join('\n')}` };
+  });
+  const chosen: typeof scored = [];
+  let used = 0;
+  for (const hunk of [...scored].sort((a, b) => b.score - a.score || a.index - b.index)) {
+    if (used + hunk.text.length > maxChars) {
+      continue;
+    }
+    chosen.push(hunk);
+    used += hunk.text.length;
+  }
+  chosen.sort((a, b) => a.index - b.index);
+  const text = chosen.map((hunk) => hunk.text).join('\n');
+  const omitted =
+    chosen.length === scored.length
+      ? ''
+      : `${scored.length - chosen.length} of ${scored.length} diff hunks are left out for size; the riskiest ones are shown.`;
+  return { text, omitted };
+}
+
+const SEGMENT_LINES = 60;
+
+/**
+ * Splits long hunks (a rebuilt bundle is often one hunk) into segments of a few dozen
+ * lines, so the budget can be spent on the risky parts.
+ */
+function segmentsOf(hunks: StructuredPatchHunk[]): { header: string; lines: string[] }[] {
+  const segments: { header: string; lines: string[] }[] = [];
+  for (const hunk of hunks) {
+    const header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+    if (hunk.lines.length <= SEGMENT_LINES) {
+      segments.push({ header, lines: hunk.lines });
+      continue;
+    }
+    for (let start = 0; start < hunk.lines.length; start += SEGMENT_LINES) {
+      segments.push({
+        header: `${header} lines ${start + 1}-${Math.min(start + SEGMENT_LINES, hunk.lines.length)} of this hunk`,
+        lines: hunk.lines.slice(start, start + SEGMENT_LINES),
+      });
+    }
+  }
+  return segments;
+}
+
+function mergeRanges(ranges: [number, number][]): [number, number][] {
+  const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+  const merged: [number, number][] = [];
+  for (const range of sorted) {
+    const last = merged.at(-1);
+    if (last && range[0] <= last[1]) {
+      last[1] = Math.max(last[1], range[1]);
+    } else {
+      merged.push([...range]);
+    }
+  }
+  return merged;
+}
