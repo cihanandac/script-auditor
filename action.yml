@@ -1,0 +1,85 @@
+name: Script Auditor
+description: Audits the third-party JavaScript your pages load, reviews every change with an LLM and alerts on suspicious ones.
+author: script-auditor
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  config:
+    description: Configuration file, relative to the repository root.
+    default: script-auditor.yml
+  data-branch:
+    description: Branch that stores the audit data between runs. Rewritten on every run.
+    default: script-auditor-data
+  site-dir:
+    description: Where to write the status site, e.g. for actions/upload-pages-artifact.
+    default: site
+  dry-run:
+    description: Print notifications instead of sending them.
+    default: 'false'
+  fail-on-alert:
+    description: Fail the step when the run raised alerts (GitHub then emails about the failed run).
+    default: 'false'
+  node-version:
+    description: Node.js version to run the auditor with.
+    default: '24'
+
+outputs:
+  site-dir:
+    description: Directory of the generated status site.
+    value: ${{ inputs.site-dir }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        package-manager-cache: false
+
+    - name: Install script-auditor
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        npm ci --no-audit --no-fund
+        npm run build
+        npx playwright install --with-deps chromium
+
+    - name: Restore audit data
+      id: restore
+      shell: bash
+      env:
+        DATA_BRANCH: ${{ inputs.data-branch }}
+        DATA_DIR: ${{ runner.temp }}/script-auditor-data
+      run: '"$GITHUB_ACTION_PATH/scripts/data-branch.sh" restore "$DATA_BRANCH" "$DATA_DIR"'
+
+    - name: Audit
+      id: audit
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        DATA_DIR: ${{ runner.temp }}/script-auditor-data
+        SITE_DIR: ${{ inputs.site-dir }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        FAIL_ON_ALERT: ${{ inputs.fail-on-alert }}
+      run: |
+        args=(run --config "$CONFIG" --data-dir "$DATA_DIR" --site-dir "$SITE_DIR")
+        [ "$DRY_RUN" = "true" ] && args+=(--dry-run)
+        [ "$FAIL_ON_ALERT" = "true" ] && args+=(--fail-on-alert)
+        node "$GITHUB_ACTION_PATH/dist/cli.js" "${args[@]}"
+
+    # Also after a failed step: a run that saved its state (alerts with fail-on-alert, a
+    # notifier error) must not repeat its findings next time
+    - name: Save audit data
+      if: always() && steps.restore.outcome == 'success'
+      shell: bash
+      env:
+        DATA_BRANCH: ${{ inputs.data-branch }}
+        DATA_DIR: ${{ runner.temp }}/script-auditor-data
+      run: |
+        if [ -f "$DATA_DIR/state.json" ]; then
+          "$GITHUB_ACTION_PATH/scripts/data-branch.sh" save "$DATA_BRANCH" "$DATA_DIR"
+        else
+          echo "The audit wrote no state, nothing to save"
+        fi
