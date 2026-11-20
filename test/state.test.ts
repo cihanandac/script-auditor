@@ -82,6 +82,18 @@ describe('DataStore', () => {
 
     expect(await store.pruneBlobs(state)).toBe(1);
     expect(await store.readBlob(old)).toBeUndefined();
+
+    // The previous version of a script is kept as well
+    await store.writeBlob(old, Buffer.from('old'));
+    state.scripts['https://cdn.example.net/a.js']!.versions = [old, current].map((sha) => ({
+      sha256: sha,
+      size: 1,
+      url: '',
+      firstSeen: '',
+      lastSeen: '',
+    }));
+    expect(await store.pruneBlobs(state)).toBe(0);
+    expect((await store.readBlob(old))?.toString()).toBe('old');
     expect((await store.readBlob(current))?.toString()).toBe('current');
     expect((await store.readBlob(queuedOld))?.toString()).toBe('queued-old');
   });

@@ -4,8 +4,8 @@
  *   state.json          scripts, hosts, pages, reviews, review queue and history
  *   blobs/<sha256>.js   script bodies, needed to diff the next version against
  *
- * Only the bodies of the current version of each script and of queued reviews are kept,
- * so the directory does not grow with every vendor release.
+ * Only the bodies of the current and the previous version of each script and of queued
+ * reviews are kept, so the directory does not grow with every vendor release.
  */
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -208,11 +208,15 @@ export class DataStore {
     }
   }
 
-  /** Deletes the bodies no script version or queued review refers to. */
+  /** Deletes the bodies that are neither a current or previous version nor queued. */
   async pruneBlobs(state: State): Promise<number> {
     const keep = new Set<string>();
     for (const script of Object.values(state.scripts)) {
       keep.add(script.sha256);
+      // The previous version too, to look into what the last change changed
+      for (const version of script.versions.slice(-2)) {
+        keep.add(version.sha256);
+      }
     }
     for (const item of state.pending) {
       keep.add(item.newSha256);
