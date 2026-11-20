@@ -61,5 +61,6 @@ export function formatSummary(report: RunReport): string {
 
 /** Backticks keep URLs and model text from being rendered as markdown or HTML. */
 function md(text: string): string {
-  return `\`${text.replace(/`/g, "'")}\``;
+  const short = text.length > 160 ? `${text.slice(0, 157)}...` : text;
+  return `\`${short.replace(/`/g, "'")}\``;
 }
