@@ -326,6 +326,9 @@ function eventDetail(site: SiteModel, event: HistoryEvent, root: string): string
 }
 
 function reviewCell(site: SiteModel, script: ScriptRecord): string {
+  if (script.perRequest) {
+    return badge('muted', 'generated per request, not reviewed');
+  }
   const review = site.currentReview(script);
   if (review) {
     return `${verdictBadge(review)} <span class="small">${esc(review.summary)}</span>`;

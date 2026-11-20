@@ -6,6 +6,7 @@
  * - only numbers or id-like tokens differ (timestamps, request ids)
  * - the script switched back to a version seen before (load-balanced variants)
  * - the URL matches `hosts.ignoreContentChanges`
+ * - the script is generated per request (several different versions within one run)
  */
 import { isLiteralOnlyChange } from './analyze.js';
 import type { Config } from './config.js';
@@ -55,6 +56,7 @@ export async function applyCrawl(
     // the first one loaded stands for all of them
     const script = variants[0]!;
     const pages = [...new Set(variants.flatMap((variant) => [...variant.pages]))].sort();
+    const perRequest = isPerRequest(variants);
     await store.writeBlob(script.sha256, script.body);
 
     const knownHost = state.hosts[script.host];
@@ -79,7 +81,10 @@ export async function applyCrawl(
 
     const existing = state.scripts[key];
     if (!existing) {
-      state.scripts[key] = newRecord(script, pages, at);
+      state.scripts[key] = {
+        ...newRecord(script, pages, at),
+        ...(perRequest ? { perRequest: true } : {}),
+      };
       if (!baseline) {
         detection.changes.push({ ...change, kind: 'new' });
         events.push({ at, type: 'new-script', key, url: script.url, sha256: script.sha256 });
@@ -90,6 +95,16 @@ export async function applyCrawl(
     existing.lastSeen = at;
     existing.url = script.url;
     existing.pages = pages;
+    if (perRequest && !existing.perRequest) {
+      existing.perRequest = true;
+      events.push({
+        at,
+        type: 'review-skipped',
+        key,
+        url: script.url,
+        message: `Generated per request (${new Set(variants.map((variant) => variant.sha256)).size} different versions in one run), content changes are no longer reviewed`,
+      });
+    }
     const current = existing.versions.at(-1);
     if (existing.sha256 === script.sha256) {
       if (current) {
@@ -202,6 +217,23 @@ function groupByKey(scripts: Map<string, CapturedScript>): Map<string, CapturedS
   return groups;
 }
 
+/**
+ * Several loads of the same script in one run with contents that differ by more than
+ * numbers and ids: the script is generated per request (e.g. it embeds the page title), so
+ * comparing it between runs only produces noise.
+ */
+function isPerRequest(variants: CapturedScript[]): boolean {
+  const [first, ...others] = variants;
+  if (!first) {
+    return false;
+  }
+  const firstCode = first.body.toString('utf8');
+  return others.some(
+    (other) =>
+      other.sha256 !== first.sha256 && !isLiteralOnlyChange(firstCode, other.body.toString('utf8')),
+  );
+}
+
 function newRecord(script: CapturedScript, pages: string[], at: string): ScriptRecord {
   return {
     key: script.key,
@@ -237,6 +269,9 @@ async function isNoise(
     // A flagged version that comes back is a change again, and alerts again
     const review = known.reviewKey ? state.reviews[known.reviewKey] : undefined;
     return !review || review.verdict === 'benign';
+  }
+  if (existing.perRequest) {
+    return true;
   }
   if (
     matchesAny(script.url, config.hosts.ignoreContentChanges) ||

@@ -52,6 +52,8 @@ export interface ScriptRecord {
   pages: string[];
   /** Newest last. */
   versions: ScriptVersion[];
+  /** Generated per request: content changes are not reviewed. */
+  perRequest?: boolean;
 }
 
 export interface HostRecord {

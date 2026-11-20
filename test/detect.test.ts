@@ -207,4 +207,25 @@ describe('applyCrawl', () => {
     expect(state.pages[ARTICLE]).toMatchObject({ error: 'Error: HTTP 404', scriptKeys: [] });
     expect(state.history.at(-1)).toMatchObject({ type: 'error', page: ARTICLE });
   });
+  it('stops reviewing scripts that are generated per request', async () => {
+    const conversion = (title: string, n: number) => ({
+      url: `https://conv.example/p/?random=${n}`,
+      body: `track({title:"${title}",t:${n}})`,
+    });
+    await run([conversion('Home', 1)], day(1));
+    // Two loads in one run that differ in more than numbers: generated per request
+    const detection = await run(
+      [
+        { ...conversion('Home', 2), pages: [HOME] },
+        { ...conversion('Article', 3), pages: [ARTICLE] },
+      ],
+      day(2),
+    );
+    expect(detection.changes).toEqual([]);
+    expect(state.scripts['https://conv.example/p/']!.perRequest).toBe(true);
+    expect(state.history.at(-1)).toMatchObject({ type: 'review-skipped' });
+    const later = await run([conversion('Something else', 4)], day(3));
+    expect(later.changes).toEqual([]);
+    expect(later.absorbed).toBe(1);
+  });
 });
