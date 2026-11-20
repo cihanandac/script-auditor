@@ -121,13 +121,15 @@ function contextLine(report: RunReport): string {
 
 function alertText(report: RunReport, alert: Alert): string {
   const lines: string[] = [];
-  const title = alert.review ? verdictLabel(alert.review) : '*🆕 NEW HOST*';
+  const flagged = alert.review && alert.review.verdict !== 'benign';
+  const title = flagged ? verdictLabel(alert.review!) : '*🆕 NEW HOST*';
   lines.push(`${title} ${link(alert.url, shortUrl(alert.url))}`);
   if (alert.newHost) {
     lines.push(`First script ever loaded from \`${escape(alert.host)}\``);
   }
   if (alert.review) {
-    lines.push(escape(alert.review.summary));
+    const prefix = flagged ? '' : 'Reviewed, looks benign: ';
+    lines.push(`${prefix}${escape(alert.review.summary)}`);
     for (const reason of alert.review.reasons) {
       lines.push(`• ${escape(reason)}`);
     }

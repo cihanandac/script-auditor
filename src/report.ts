@@ -10,7 +10,7 @@ export interface Alert {
   scriptId: string;
   /** The script comes from a host never seen before. */
   newHost: boolean;
-  /** Set when the script was reviewed and the verdict is at or above alerts.minVerdict. */
+  /** Set when the script was reviewed in this run (an alert has a verdict at or above alerts.minVerdict, or a new host). */
   review?: Review;
 }
 
