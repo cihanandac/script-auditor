@@ -45,6 +45,13 @@ describe('normalizeLiterals', () => {
     expect(normalizeLiterals(a)).toBe(normalizeLiterals(b));
   });
 
+  it('equalizes build and commit hashes', () => {
+    expect(normalizeLiterals('globalThis.__BUILD__ = `5b8fa22`;')).toBe(
+      normalizeLiterals('globalThis.__BUILD__ = `3496065`;'),
+    );
+    expect(normalizeLiterals('x="deadbeefcafe"')).toBe('x="deadbeefcafe"');
+  });
+
   it('keeps short ids such as analytics property ids distinguishable', () => {
     expect(normalizeLiterals('gtag("config","G-ABC123XY")')).not.toBe(
       normalizeLiterals('gtag("config","G-ZZZ999QQ")'),

@@ -186,12 +186,13 @@ export function isLiteralOnlyChange(oldCode: string, newCode: string): boolean {
 }
 
 /**
- * Replaces numbers and long id-like tokens, the parts that change on every request in
- * dynamically generated scripts (timestamps, cache keys, request ids).
+ * Replaces numbers, hex hashes and long id-like tokens, the parts that change on every
+ * request or deployment (timestamps, cache keys, request ids, build and commit hashes).
  */
 export function normalizeLiterals(code: string): string {
   return code
     .replace(/\b[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*\b/g, (token) => (token.length >= 16 ? 'ID' : token))
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/gi, 'HEX')
     .replace(/\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi, '0');
 }
 
