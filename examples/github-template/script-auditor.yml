@@ -19,6 +19,8 @@ consent:
   timeoutSeconds: 15
 
 crawl:
+  # Pages scanned at the same time (tabs of one browser session)
+  concurrency: 3
   locale: en-US
   timezone: UTC
   settleSeconds: 5

@@ -10,7 +10,8 @@ name: Script Auditor
 
 on:
   schedule:
-    # Every hour at minute 17 (GitHub delays runs at minute 0 most)
+    # Every hour at minute 17 (GitHub delays runs at minute 0 most). In a private
+    # repository on the free plan, every 2 hours fits the 2,000 monthly minutes.
     - cron: '17 * * * *'
   workflow_dispatch:
 

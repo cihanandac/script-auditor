@@ -85,6 +85,14 @@ The first run records everything as the baseline and alerts on nothing. Set
 The workflow runs hourly. The auditor keeps its data on the `script-auditor-data` branch.
 That branch is rewritten on every run (always one commit), so it doesn't grow.
 
+If the repository with the action is private, other repositories can only use it after
+you allow it: in the action's repository, go to Settings > Actions > General > Access.
+
+A run of 26 pages takes about 75 seconds of crawling, and 3 to 4 minutes on a GitHub
+runner including installing Chromium. Public repositories get Actions minutes for free.
+Private ones on the free plan get 2,000 minutes a month, so run every 2 or 3 hours there
+(`cron: '17 */2 * * *'`) or audit fewer pages.
+
 ## Configuration
 
 Only `pages` is required.
