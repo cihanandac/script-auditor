@@ -287,18 +287,89 @@ function segmentsOf(hunks: StructuredPatchHunk[]): { header: string; lines: stri
   const segments: { header: string; lines: string[] }[] = [];
   for (const hunk of hunks) {
     const header = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
-    if (hunk.lines.length <= SEGMENT_LINES) {
-      segments.push({ header, lines: hunk.lines });
+    const lines = compactLongLines(hunk.lines);
+    if (lines.length <= SEGMENT_LINES) {
+      segments.push({ header, lines });
       continue;
     }
-    for (let start = 0; start < hunk.lines.length; start += SEGMENT_LINES) {
+    for (let start = 0; start < lines.length; start += SEGMENT_LINES) {
       segments.push({
-        header: `${header} lines ${start + 1}-${Math.min(start + SEGMENT_LINES, hunk.lines.length)} of this hunk`,
-        lines: hunk.lines.slice(start, start + SEGMENT_LINES),
+        header: `${header} lines ${start + 1}-${Math.min(start + SEGMENT_LINES, lines.length)} of this hunk`,
+        lines: lines.slice(start, start + SEGMENT_LINES),
       });
     }
   }
   return segments;
+}
+
+const LONG_LINE = 1500;
+const LINE_CONTEXT = 200;
+
+/**
+ * Formatting cannot break up long strings, such as a JSON config embedded in one line. When
+ * such a line changed, only the part that differs from its old version is kept, with some
+ * context; other long lines are cut.
+ */
+export function compactLongLines(lines: string[]): string[] {
+  const result = [...lines];
+  // Pair each run of removed lines with the run of added lines that follows it
+  for (let index = 0; index < result.length;) {
+    let removedEnd = index;
+    while (removedEnd < result.length && result[removedEnd]!.startsWith('-')) {
+      removedEnd++;
+    }
+    let addedEnd = removedEnd;
+    while (addedEnd < result.length && result[addedEnd]!.startsWith('+')) {
+      addedEnd++;
+    }
+    const pairs = Math.min(removedEnd - index, addedEnd - removedEnd);
+    for (let pair = 0; pair < pairs; pair++) {
+      const oldIndex = index + pair;
+      const newIndex = removedEnd + pair;
+      const [oldLine, newLine] = [result[oldIndex]!, result[newIndex]!];
+      if (oldLine.length > LONG_LINE || newLine.length > LONG_LINE) {
+        [result[oldIndex], result[newIndex]] = differingParts(oldLine, newLine);
+      }
+    }
+    index = addedEnd > index ? addedEnd : index + 1;
+  }
+  return result.map((line) =>
+    line.length > LONG_LINE * 2
+      ? `${line.slice(0, LONG_LINE)} /* ...${line.length - LONG_LINE} more characters... */`
+      : line,
+  );
+}
+
+function differingParts(oldLine: string, newLine: string): [string, string] {
+  // Skip the +/- marker, then find the common prefix and suffix of both lines
+  let prefix = 1;
+  while (
+    prefix < oldLine.length &&
+    prefix < newLine.length &&
+    oldLine[prefix] === newLine[prefix]
+  ) {
+    prefix++;
+  }
+  let suffix = 0;
+  while (
+    suffix < oldLine.length - prefix &&
+    suffix < newLine.length - prefix &&
+    oldLine[oldLine.length - 1 - suffix] === newLine[newLine.length - 1 - suffix]
+  ) {
+    suffix++;
+  }
+  const cut = (line: string) => {
+    const start = Math.max(1, prefix - LINE_CONTEXT);
+    const end = Math.min(line.length, line.length - suffix + LINE_CONTEXT);
+    let middle = line.slice(start, end);
+    if (middle.length > LONG_LINE * 2) {
+      middle = `${middle.slice(0, LONG_LINE)} /* ...${middle.length - LONG_LINE * 2} characters... */ ${middle.slice(-LONG_LINE)}`;
+    }
+    const before = start > 1 ? `/* ...${start - 1} characters... */ ` : '';
+    const after = end < line.length ? ` /* ...${line.length - end} characters... */` : '';
+    return `${line[0]}${before}${middle}${after}`;
+  };
+  return [cut(oldLine), cut(newLine)];
 }
 
 function mergeRanges(ranges: [number, number][]): [number, number][] {

