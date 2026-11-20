@@ -127,7 +127,11 @@ async function scanPage(
     if (response && response.status() >= 400) {
       throw new Error(`HTTP ${response.status()}`);
     }
-    await acceptConsent(page, first, config, result);
+    // Wait for the banner on the first page, and on later ones as long as every earlier
+    // page failed to load and so could not have shown it
+    const waitForBanner =
+      first || (!result.consentAccepted && result.pages.every((scanned) => scanned.error));
+    await acceptConsent(page, waitForBanner, config, result);
     await waitForLoad(page, config);
     await scrollToBottom(page, config);
     await page.waitForTimeout(config.crawl.settleSeconds * 1000);
@@ -212,23 +216,27 @@ async function scriptUrlsInPage(page: PlaywrightPage): Promise<string[]> {
 
 async function acceptConsent(
   page: PlaywrightPage,
-  first: boolean,
+  waitForBanner: boolean,
   config: Config,
   result: CrawlResult,
 ): Promise<void> {
   if (!config.consent.selector) {
     return;
   }
-  // The banner shows up on the first page; later pages only get a short check in case
-  // the consent got lost
-  const timeout = first ? config.consent.timeoutSeconds * 1000 : 2000;
-  try {
-    await page.locator(config.consent.selector).first().click({ timeout });
-  } catch {
-    if (first) {
+  const button = page.locator(config.consent.selector).first();
+  if (waitForBanner) {
+    try {
+      await button.click({ timeout: config.consent.timeoutSeconds * 1000 });
+    } catch {
       log.warn(`Consent button "${config.consent.selector}" not found on ${page.url()}`);
+      return;
     }
-    return;
+  } else {
+    // The consent from the first page carries over; only click if the banner is back
+    if (!(await button.isVisible())) {
+      return;
+    }
+    await button.click();
   }
   result.consentAccepted = true;
   log.info(`Accepted the consent banner on ${page.url()}`);
