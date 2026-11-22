@@ -61,7 +61,9 @@ script-auditor fills that gap:
    - one page per script, with its versions, verdicts and history.
 
 The first run records everything as the baseline and alerts on nothing. Set
-`llm.reviewBaseline: true` to review the baseline too.
+`llm.reviewBaseline: true` to review the baseline too. It also works when turned on later:
+every recorded script that was never reviewed is queued, and the queue is worked through
+over the following runs.
 
 ## Quick start with GitHub Actions
 

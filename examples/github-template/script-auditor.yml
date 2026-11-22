@@ -40,7 +40,9 @@ llm:
   apiKeyEnv: OPENAI_API_KEY
   # baseUrl: https://my-openai-compatible-endpoint/v1
   maxReviewsPerRun: 40
-  # Also review every script found on the very first run
+  # Also review recorded scripts that were never reviewed: the first run's baseline,
+  # or everything recorded before you turned this on. Works through the queue over
+  # several runs, at most maxReviewsPerRun calls each.
   reviewBaseline: false
 
 alerts:

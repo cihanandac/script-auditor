@@ -54,8 +54,8 @@ export async function runAudit(options: RunOptions): Promise<RunOutcome> {
   if (options.reviewer) {
     const at = now().toISOString();
     enqueue(state, detection.changes, at);
-    if (detection.baseline && config.llm.reviewBaseline) {
-      enqueue(state, baselineChanges(state), at);
+    if (config.llm.reviewBaseline) {
+      enqueue(state, unreviewedScripts(state), at);
     }
     queue = await processQueue(state, store, options.reviewer, config, now());
   }
@@ -95,9 +95,16 @@ export async function runAudit(options: RunOptions): Promise<RunOutcome> {
   return outcome;
 }
 
-/** Every recorded script as a new one, for `llm.reviewBaseline`. */
-function baselineChanges(state: State): Detection['changes'] {
-  return Object.values(state.scripts).map((script) => ({
+/**
+ * Scripts none of whose versions was ever reviewed, as new ones, for `llm.reviewBaseline`.
+ * Covers the baseline of the first run and scripts recorded before the option was turned
+ * on. Per-request scripts are left out: their body differs on every run.
+ */
+export function unreviewedScripts(state: State): Detection['changes'] {
+  const unreviewed = Object.values(state.scripts).filter(
+    (script) => !script.perRequest && !script.versions.some((version) => version.reviewKey),
+  );
+  return unreviewed.map((script) => ({
     kind: 'new' as const,
     key: script.key,
     url: script.url,

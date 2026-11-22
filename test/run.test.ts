@@ -11,8 +11,8 @@ import { parseConfig, type Config } from '../src/config.js';
 import type { Notifier } from '../src/notify/types.js';
 import type { RunReport } from '../src/report.js';
 import type { ReviewRequest, ReviewResult, Reviewer } from '../src/review/types.js';
-import { runAudit } from '../src/run.js';
-import { DataStore } from '../src/state.js';
+import { runAudit, unreviewedScripts } from '../src/run.js';
+import { DataStore, emptyState, type ScriptRecord } from '../src/state.js';
 import { startTestSite, type TestSite } from './helpers/site-server.js';
 
 class KeywordReviewer implements Reviewer {
@@ -130,5 +130,46 @@ describe('runAudit', () => {
     expect(report.alerts).toEqual([]);
     expect(reviewer.reviewed.length).toBe(before);
     expect(report.stats.absorbed).toBe(1);
+  });
+});
+
+describe('unreviewedScripts', () => {
+  const script = (key: string, extra: Partial<ScriptRecord> = {}): ScriptRecord => ({
+    key,
+    url: key,
+    host: 'cdn.example.net',
+    sha256: `sha-${key}`,
+    size: 1,
+    firstSeen: '',
+    lastSeen: '',
+    lastChanged: '',
+    pages: ['https://site.example/'],
+    versions: [{ sha256: `sha-${key}`, size: 1, url: key, firstSeen: '', lastSeen: '' }],
+    ...extra,
+  });
+
+  it('lists scripts no version of which was reviewed, also after the first run', () => {
+    const state = emptyState(new Date());
+    state.runs = 3;
+    state.scripts['a'] = script('a');
+    state.scripts['b'] = script('b', {
+      versions: [
+        { sha256: 'old', size: 1, url: 'b', firstSeen: '', lastSeen: '', reviewKey: 'new:old' },
+        { sha256: 'sha-b', size: 1, url: 'b', firstSeen: '', lastSeen: '' },
+      ],
+    });
+    state.scripts['c'] = script('c', { perRequest: true });
+    expect(unreviewedScripts(state)).toEqual([
+      {
+        kind: 'new',
+        key: 'a',
+        url: 'a',
+        host: 'cdn.example.net',
+        newSha256: 'sha-a',
+        pages: ['https://site.example/'],
+        newHost: false,
+        quietHost: false,
+      },
+    ]);
   });
 });

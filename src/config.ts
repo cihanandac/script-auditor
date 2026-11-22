@@ -23,7 +23,7 @@ const llmSchema = z
     maxReviewsPerRun: z.number().int().positive().default(40),
     /** Upper bound for the code sent to the model per review, in characters. */
     maxInputChars: z.number().int().min(10_000).default(120_000),
-    /** Also review every script found on the very first run. */
+    /** Also review recorded scripts that were never reviewed, such as the first run's. */
     reviewBaseline: z.boolean().default(false),
   })
   .prefault({});
