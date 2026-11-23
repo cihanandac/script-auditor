@@ -85,6 +85,19 @@ export interface PendingReview {
   newHost: boolean;
   queuedAt: string;
   attempts: number;
+  /**
+   * Other scripts with the same content, queued in the same run: they share this review
+   * (one model call) and each gets its verdict.
+   */
+  also?: SharedScript[];
+}
+
+export interface SharedScript {
+  key: string;
+  url: string;
+  host: string;
+  pages: string[];
+  newHost: boolean;
 }
 
 export type HistoryEventType =

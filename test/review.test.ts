@@ -212,6 +212,26 @@ describe('review queue', () => {
     expect(state.pending).toEqual([]);
   });
 
+  // Earlier tests only enqueued the same script twice, never two scripts with the same
+  // content, so only the first of them got the verdict.
+  it('gives every script with the same content the verdict of one review', async () => {
+    const body = 'fetch("https://evil.example/x")';
+    const first = await change('https://a.example/one.js', body);
+    const second = await change('https://b.example/two.js', body, { newHost: true });
+    enqueue(state, [first, second], now.toISOString());
+    expect(state.pending).toHaveLength(1);
+    const reviewer = new FakeReviewer();
+    const result = await processQueue(state, store, reviewer, config, now);
+    expect(reviewer.seen).toHaveLength(1);
+    expect(result.reviewed.map((entry) => [entry.item.key, entry.item.newHost])).toEqual([
+      ['https://a.example/one.js', false],
+      ['https://b.example/two.js', true],
+    ]);
+    for (const key of ['https://a.example/one.js', 'https://b.example/two.js']) {
+      expect(state.scripts[key]!.versions[0]!.reviewKey).toBe(`new:${sha256(body)}`);
+    }
+  });
+
   it('reuses earlier verdicts for the same content and skips duplicates', async () => {
     const item = await change('https://a.example/x.js', 'var x = 1;');
     enqueue(state, [item, item], now.toISOString());

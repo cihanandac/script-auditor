@@ -30,14 +30,23 @@ export interface QueueResult {
 }
 
 export function enqueue(state: State, changes: Change[], at: string): void {
-  const queued = new Set(state.pending.map((item) => item.reviewKey));
+  const queued = new Map(state.pending.map((item) => [item.reviewKey, item]));
   for (const change of changes) {
     const reviewKey = reviewKeyFor(change.newSha256, change.oldSha256);
-    if (queued.has(reviewKey)) {
+    const newHost = change.newHost && !change.quietHost;
+    const existing = queued.get(reviewKey);
+    if (existing) {
+      // Same content under another URL: one review, but every script gets the verdict
+      const known = existing.key === change.key || existing.also?.some((s) => s.key === change.key);
+      if (!known) {
+        existing.also = [
+          ...(existing.also ?? []),
+          { key: change.key, url: change.url, host: change.host, pages: change.pages, newHost },
+        ];
+      }
       continue;
     }
-    queued.add(reviewKey);
-    state.pending.push({
+    const item: PendingReview = {
       reviewKey,
       kind: change.kind,
       key: change.key,
@@ -46,11 +55,19 @@ export function enqueue(state: State, changes: Change[], at: string): void {
       ...(change.oldSha256 ? { oldSha256: change.oldSha256 } : {}),
       newSha256: change.newSha256,
       pages: change.pages,
-      newHost: change.newHost && !change.quietHost,
+      newHost,
       queuedAt: at,
       attempts: 0,
-    });
+    };
+    queued.set(reviewKey, item);
+    state.pending.push(item);
   }
+}
+
+/** The item itself and every script sharing its review, each as an item of its own. */
+function scriptsOf(item: PendingReview): PendingReview[] {
+  const { also, ...first } = item;
+  return [first, ...(also ?? []).map((script) => ({ ...first, ...script }))];
 }
 
 export async function processQueue(
@@ -123,11 +140,13 @@ export async function processQueue(
       } else {
         // Remembered on the version, so the status site shows it as not reviewed and
         // reviewBaseline does not queue it again on every run
-        const version = state.scripts[item.key]?.versions.findLast(
-          (candidate) => candidate.sha256 === item.newSha256,
-        );
-        if (version) {
-          version.reviewFailed = { at, message: shortError(error) };
+        for (const script of scriptsOf(item)) {
+          const version = state.scripts[script.key]?.versions.findLast(
+            (candidate) => candidate.sha256 === item.newSha256,
+          );
+          if (version) {
+            version.reviewFailed = { at, message: shortError(error) };
+          }
         }
         appendHistory(
           state,
@@ -145,7 +164,12 @@ export async function processQueue(
 
 /** Alert-worthy first: scripts from new hosts, then changes of known scripts, then new ones. */
 function prioritized(pending: PendingReview[]): PendingReview[] {
-  const rank = (item: PendingReview) => (item.newHost ? 0 : item.kind === 'changed' ? 1 : 2);
+  const rank = (item: PendingReview) =>
+    item.newHost || item.also?.some((script) => script.newHost)
+      ? 0
+      : item.kind === 'changed'
+        ? 1
+        : 2;
   return [...pending].sort((a, b) => rank(a) - rank(b) || a.queuedAt.localeCompare(b.queuedAt));
 }
 
@@ -159,27 +183,29 @@ function finish(
   config: Config,
 ): void {
   state.reviews[item.reviewKey] = review;
-  const versions = state.scripts[item.key]?.versions ?? [];
-  const version = versions.findLast((candidate) => candidate.sha256 === item.newSha256);
-  if (version) {
-    version.reviewKey = item.reviewKey;
+  for (const script of scriptsOf(item)) {
+    const versions = state.scripts[script.key]?.versions ?? [];
+    const version = versions.findLast((candidate) => candidate.sha256 === script.newSha256);
+    if (version) {
+      version.reviewKey = script.reviewKey;
+    }
+    result.reviewed.push({ item: script, review, cached });
+    appendHistory(
+      state,
+      [
+        {
+          at,
+          type: 'reviewed',
+          key: script.key,
+          url: script.url,
+          sha256: script.newSha256,
+          verdict: review.verdict,
+          message: review.summary,
+        },
+      ],
+      config.retention.historyEvents,
+    );
   }
-  result.reviewed.push({ item, review, cached });
-  appendHistory(
-    state,
-    [
-      {
-        at,
-        type: 'reviewed',
-        key: item.key,
-        url: item.url,
-        sha256: item.newSha256,
-        verdict: review.verdict,
-        message: review.summary,
-      },
-    ],
-    config.retention.historyEvents,
-  );
 }
 
 /** Forgets reviews no stored version refers to once they are older than the cutoff. */
