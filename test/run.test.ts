@@ -2,7 +2,7 @@
  * End to end with a real browser against the local test site: baseline, a compromised
  * vendor script that pulls in code from a new host, and the vendor's recovery.
  */
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowserContext } from 'playwright';
@@ -130,6 +130,35 @@ describe('runAudit', () => {
     expect(report.alerts).toEqual([]);
     expect(reviewer.reviewed.length).toBe(before);
     expect(report.stats.absorbed).toBe(1);
+  });
+});
+
+// Earlier tests always had at least one reachable page, so a run that saw nothing still
+// advanced the state and exited successfully.
+describe('runAudit when no page can be scanned', () => {
+  let site: TestSite;
+  let dir: string;
+
+  beforeAll(async () => {
+    site = await startTestSite();
+    dir = await mkdtemp(join(tmpdir(), 'script-auditor-down-'));
+  });
+
+  afterAll(async () => {
+    await site?.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it('fails and leaves the audit data alone', async () => {
+    const config = parseConfig({
+      pages: [`${site.firstParty}/missing`, `${site.firstParty}/also-missing`],
+      firstPartyDomains: ['localhost'],
+      crawl: { settleSeconds: 0, pageTimeoutSeconds: 10 },
+    });
+    await expect(runAudit({ config, dataDir: join(dir, 'data') })).rejects.toThrow(
+      /None of the 2 pages could be scanned/,
+    );
+    await expect(access(join(dir, 'data', 'state.json'))).rejects.toThrow();
   });
 });
 

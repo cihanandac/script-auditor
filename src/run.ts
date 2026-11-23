@@ -43,6 +43,9 @@ export async function runAudit(options: RunOptions): Promise<RunOutcome> {
   const state = await store.load(now());
 
   const crawl = await (options.crawler ?? defaultCrawler)(config, options.crawlOptions);
+  // A run that saw no page must not change the state: it would use up the baseline, or
+  // forget scripts and report them all as new once the site is reachable again
+  assertSomePageScanned(crawl);
   const detection = await applyCrawl(state, crawl, config, store, now());
   log.info(
     detection.baseline
@@ -93,6 +96,17 @@ export async function runAudit(options: RunOptions): Promise<RunOutcome> {
     }
   }
   return outcome;
+}
+
+export function assertSomePageScanned(crawl: CrawlResult): void {
+  if (crawl.pages.length === 0 || crawl.pages.some((page) => !page.error)) {
+    return;
+  }
+  const errors = crawl.pages.slice(0, 3).map((page) => `${page.url}: ${page.error}`);
+  const more = crawl.pages.length > 3 ? ` (and ${crawl.pages.length - 3} more)` : '';
+  throw new Error(
+    `None of the ${crawl.pages.length} pages could be scanned, the audit data is left unchanged. ${errors.join('; ')}${more}`,
+  );
 }
 
 /**

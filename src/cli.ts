@@ -15,7 +15,7 @@ import { crawl } from './crawl.js';
 import { log } from './log.js';
 import { createNotifiers } from './notify/index.js';
 import { createReviewer } from './review/index.js';
-import { runAudit } from './run.js';
+import { assertSomePageScanned, runAudit } from './run.js';
 import { buildSite } from './site.js';
 import { DataStore } from './state.js';
 import { formatSummary } from './summary.js';
@@ -85,9 +85,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           dryRun: values['dry-run'],
           failOnAlert: values['fail-on-alert'],
         });
-      case 'inventory':
-        printInventory(await crawl(config));
+      case 'inventory': {
+        const result = await crawl(config);
+        printInventory(result);
+        assertSomePageScanned(result);
         return 0;
+      }
       case 'site': {
         const state = await new DataStore(values['data-dir']).load(new Date());
         await buildSite(state, config, values['site-dir']);
