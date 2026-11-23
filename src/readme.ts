@@ -39,9 +39,8 @@ export function renderReadmeSection(state: State, config: Config): string {
   if (attention.length > 0) {
     const count = attention.length;
     lines.push(`🔴 **${count} script${count === 1 ? ' needs' : 's need'} attention**`);
-    lines.push('');
-    lines.push('| Verdict | Script | Pages | Why |');
-    lines.push('| --- | --- | --- | --- |');
+    // A list rather than a table: GitHub cannot wrap a long script URL in a table cell, so
+    // the other columns get squeezed to a few letters
     for (const { script, review } of attention) {
       const pages = script.pages.map((url) => state.pages[url]?.name ?? url);
       const pageList =
@@ -52,8 +51,12 @@ export function renderReadmeSection(state: State, config: Config): string {
       const details = siteUrl
         ? ` ([details](${siteUrl}/scripts/${scriptId(script.key)}.html))`
         : '';
+      // A backslash at the end of a line is a line break
       lines.push(
-        `| ${VERDICT_ICON[review.verdict]} ${review.verdict} | ${code(script.key)}${details} | ${pageList} | ${text(review.summary, 200)} |`,
+        '',
+        `- ${VERDICT_ICON[review.verdict]} **${review.verdict}** ${code(script.key)}${details}\\`,
+        `  Pages: ${pageList}\\`,
+        `  ${text(review.summary, 400)}`,
       );
     }
   } else if (state.runs === 0) {
@@ -122,11 +125,8 @@ function text(value: string, max = 120): string {
     .replace(/@/g, '@⁠');
 }
 
-/**
- * A code span: nothing inside is rendered and a backtick cannot close it early. A pipe
- * would still end the table cell, so it is written URL-encoded.
- */
+/** A code span: nothing inside is rendered, and a backtick cannot close it early. */
 function code(value: string, max = 120): string {
-  const flat = value.replace(/\s+/g, ' ').replace(/`/g, "'").replace(/\|/g, '%7C');
+  const flat = value.replace(/\s+/g, ' ').replace(/`/g, "'");
   return `\`${flat.length > max ? `${flat.slice(0, max - 1)}…` : flat}\``;
 }

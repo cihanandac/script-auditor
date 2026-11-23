@@ -75,15 +75,19 @@ describe('renderReadmeSection', () => {
   it('lists flagged scripts, worst first, with their pages and a link to the details', () => {
     const section = renderReadmeSection(fixture(), config({ url: 'https://audit.example/' }));
     expect(section).toContain('🔴 **2 scripts need attention**');
-    const rows = section
-      .split('\n')
-      .filter((line) => line.startsWith('| 🔴') || line.startsWith('| 🟠'));
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain(
-      `\`${BAD}\` ([details](https://audit.example/scripts/${scriptId(BAD)}.html))`,
-    );
-    expect(rows[0]).toContain('| Home, Shop |');
-    expect(rows[1]).toContain(ODD);
+    const items = section.split('\n\n').filter((block) => block.startsWith('- '));
+    expect(items).toEqual([
+      [
+        `- 🔴 **malicious** \`${BAD}\` ([details](https://audit.example/scripts/${scriptId(BAD)}.html))\\`,
+        '  Pages: Home, Shop\\',
+        '  Sends card numbers to x&#46;evil&#46;example&#46;',
+      ].join('\n'),
+      [
+        `- 🟠 **suspicious** \`${ODD}\` ([details](https://audit.example/scripts/${scriptId(ODD)}.html))\\`,
+        '  Pages: Shop\\',
+        '  Loads code from a new host&#46;',
+      ].join('\n'),
+    ]);
     expect(section).not.toContain(GOOD);
     expect(section).toContain('[Status site](https://audit.example)');
   });
@@ -125,17 +129,24 @@ describe('renderReadmeSection', () => {
       'malicious',
       'See [here](https://evil.example) <img src=x> | @octocat #1 `x` https://evil.example',
     );
-    state.scripts[BAD]!.key = 'https://cdn.bad.example/a|b`c.js';
-    const row = renderReadmeSection(state, config())
-      .split('\n')
-      .find((line) => line.startsWith('| 🔴'))!;
-    // Exactly the five pipes of four cells
-    expect(row.match(/\|/g)).toHaveLength(5);
-    expect(row).toContain("`https://cdn.bad.example/a%7Cb'c.js`");
+    state.scripts[BAD]!.key = 'https://cdn.bad.example/a`b.js';
+    const lines = renderReadmeSection(state, config()).split('\n');
+    const item = lines.findIndex((line) => line.startsWith('- 🔴'));
+    expect(lines[item]).toContain("`https://cdn.bad.example/a'b.js`");
+    const summary = lines[item + 2]!;
     for (const raw of ['[here]', '](', '<img', 'https://evil', '@octocat', ' #1 ', '`x`']) {
-      expect(row).not.toContain(raw);
+      expect(summary).not.toContain(raw);
     }
-    expect(row).toContain('@⁠octocat');
+    expect(summary).toContain('@⁠octocat');
+  });
+
+  it('keeps a summary on its line, so it cannot start a heading or end the list', () => {
+    const state = fixture();
+    state.reviews['r:bad'] = review('malicious', 'one\n\n# Heading\nends with a backslash \\');
+    const lines = renderReadmeSection(state, config()).split('\n');
+    const item = lines.findIndex((line) => line.startsWith('- 🔴'));
+    expect(lines[item + 2]).toBe('  one &#35; Heading ends with a backslash &#92;');
+    expect(lines[item + 3]).toBe('');
   });
 });
 

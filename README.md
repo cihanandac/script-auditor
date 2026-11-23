@@ -100,7 +100,7 @@ Private ones on the free plan get 2,000 minutes a month, so run every 2 or 3 hou
 ### Findings in your README
 
 The action can write the scripts that need attention into your repository's README, as
-a table with each script's verdict, the pages that load it and the reason. Problems are
+a list with each script's verdict, the pages that load it and the reason. Problems are
 listed too: failed reviews, pages that could not be scanned, a consent banner that was not
 accepted.
 
