@@ -22,6 +22,14 @@ export interface CapturedScript {
   pages: Set<string>;
 }
 
+/**
+ * Key of a captured body in CrawlResult.scripts: the URL for the first body seen, the URL
+ * plus hash for a different body the same URL returned on another page.
+ */
+export function variantKey(url: string, sha: string): string {
+  return `${url}\n${sha}`;
+}
+
 export interface PageScan {
   url: string;
   name: string;
@@ -132,6 +140,8 @@ async function scanPage(
   };
   const pending: Promise<void>[] = [];
   const seenOnPage = new Set<string>();
+  /** Key in result.scripts of the body this page received, per URL. */
+  const capturedHere = new Map<string, string>();
 
   const onResponse = (response: Response) => {
     const request = response.request();
@@ -139,7 +149,7 @@ async function scanPage(
       return;
     }
     seenOnPage.add(response.url());
-    pending.push(capture(response, config, result));
+    pending.push(capture(response, config, result, capturedHere));
   };
 
   page.on('response', onResponse);
@@ -168,7 +178,8 @@ async function scanPage(
   }
 
   for (const url of seenOnPage) {
-    const script = result.scripts.get(url);
+    // A URL served from the cache has no body of its own here: the first body stands for it
+    const script = result.scripts.get(capturedHere.get(url) ?? url);
     if (script) {
       script.pages.add(target.url);
       scan.scriptUrls.push(url);
@@ -187,10 +198,15 @@ function isMainFrame(page: PlaywrightPage, response: Response): boolean {
   }
 }
 
-async function capture(response: Response, config: Config, result: CrawlResult): Promise<void> {
+async function capture(
+  response: Response,
+  config: Config,
+  result: CrawlResult,
+  capturedHere: Map<string, string>,
+): Promise<void> {
   const url = response.url();
   const host = hostOf(url);
-  if (!host || isFirstParty(host, config.firstPartyDomains) || result.scripts.has(url)) {
+  if (!host || isFirstParty(host, config.firstPartyDomains)) {
     return;
   }
   if (response.status() < 200 || response.status() >= 300) {
@@ -203,13 +219,19 @@ async function capture(response: Response, config: Config, result: CrawlResult):
     log.debug(`No body for ${url}: ${shortError(error)}`);
     return;
   }
-  if (!result.scripts.has(url)) {
-    result.scripts.set(url, {
+  // Every different body is kept: a vendor may serve one page a different script than
+  // another from the same URL, and each page must be attributed to what it ran
+  const hash = sha256(body);
+  const first = result.scripts.get(url);
+  const key = !first || first.sha256 === hash ? url : variantKey(url, hash);
+  capturedHere.set(url, key);
+  if (!result.scripts.has(key)) {
+    result.scripts.set(key, {
       url,
       key: scriptKey(url),
       host,
       body,
-      sha256: sha256(body),
+      sha256: hash,
       pages: new Set(),
     });
   }

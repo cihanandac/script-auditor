@@ -170,9 +170,11 @@ async function run(config: Config, flags: RunFlags): Promise<number> {
 }
 
 function printInventory(result: CrawlResult): void {
-  const hosts = new Set([...result.scripts.values()].map((script) => script.host));
+  const scripts = [...result.scripts.values()];
+  const hosts = new Set(scripts.map((script) => script.host));
+  const urls = new Set(scripts.map((script) => script.url));
   console.log(
-    `${result.scripts.size} third-party scripts from ${hosts.size} hosts on ${result.pages.length} pages` +
+    `${urls.size} third-party scripts from ${hosts.size} hosts on ${result.pages.length} pages` +
       (result.consentConfigured ? ` (consent accepted: ${result.consentAccepted})` : ''),
   );
   for (const page of result.pages) {

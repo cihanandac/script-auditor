@@ -23,6 +23,7 @@ export async function startTestSite(): Promise<TestSite> {
     ['/in-iframe.js', 'window.inIframe = true;'],
   ]);
   let port = 0;
+  let byPageRequests = 0;
   const third = () => `http://127.0.0.1:${port}`;
 
   const pages: Record<string, () => string> = {
@@ -57,12 +58,25 @@ export async function startTestSite(): Promise<TestSite> {
       <script src="${third()}/vendor.js?v=1"></script>
       <script src="${third()}/page2-only.js"></script>
     </body></html>`,
+    // Both load the same vendor URL; the vendor serves the checkout something else
+    '/shop': () =>
+      `<!doctype html><html><body><script src="${third()}/by-page.js"></script></body></html>`,
+    '/shop/checkout': () =>
+      `<!doctype html><html><body><script src="${third()}/by-page.js"></script></body></html>`,
     '/frame': () =>
       `<!doctype html><html><body><script src="/in-iframe.js"></script></body></html>`,
   };
 
   const server: Server = createServer((request, response) => {
     const path = new URL(request.url ?? '/', 'http://x').pathname;
+    if (path === '/by-page.js') {
+      // Cross-origin requests carry only the origin as referrer: alternate per request
+      // instead (the test crawls the shop first, then the checkout, in one tab)
+      const checkout = byPageRequests++ % 2 === 1;
+      response.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-store' });
+      response.end(checkout ? 'window.byPage = "checkout"; skim();' : 'window.byPage = "shop";');
+      return;
+    }
     const script = scripts.get(path);
     if (script !== undefined) {
       response.writeHead(200, {

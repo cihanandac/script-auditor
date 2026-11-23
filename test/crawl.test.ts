@@ -64,4 +64,29 @@ describe('crawl', () => {
     expect(missing.error).toMatch(/HTTP 404/);
     expect(missing.scriptUrls).toEqual([]);
   });
+
+  // Earlier tests only had vendors that serve every page the same body, so keeping the
+  // first body per URL looked correct.
+  it('keeps a different body the same URL serves to another page', async () => {
+    const shop = parseConfig({
+      pages: [`${site.firstParty}/shop`, `${site.firstParty}/shop/checkout`],
+      firstPartyDomains: ['localhost'],
+      crawl: { settleSeconds: 0.2, pageTimeoutSeconds: 10, concurrency: 1 },
+    });
+    const shopResult = await crawl(shop);
+    const bodies = [...shopResult.scripts.values()].map((script) => ({
+      body: script.body.toString(),
+      pages: [...script.pages],
+    }));
+    expect(bodies).toEqual(
+      expect.arrayContaining([
+        { body: 'window.byPage = "shop";', pages: [`${site.firstParty}/shop`] },
+        {
+          body: 'window.byPage = "checkout"; skim();',
+          pages: [`${site.firstParty}/shop/checkout`],
+        },
+      ]),
+    );
+    expect(bodies).toHaveLength(2);
+  });
 });

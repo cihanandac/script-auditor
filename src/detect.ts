@@ -8,7 +8,7 @@
  * - the URL matches `hosts.ignoreContentChanges`
  * - the script is generated per request (several different versions within one run)
  */
-import { isLiteralOnlyChange } from './analyze.js';
+import { countIndicators, hostsInCode, isLiteralOnlyChange } from './analyze.js';
 import type { Config } from './config.js';
 import { matchesAny } from './config.js';
 import type { CapturedScript, CrawlResult } from './crawl.js';
@@ -51,25 +51,29 @@ export async function applyCrawl(
   const detection: Detection = { baseline, changes: [], newHosts: [], removed: [], absorbed: 0 };
   const events: HistoryEvent[] = [];
 
-  for (const [key, variants] of groupByKey(crawl.scripts)) {
-    // Scripts generated per request can load several times with different query strings;
-    // the first one loaded stands for all of them
-    const script = variants[0]!;
-    const pages = [...new Set(variants.flatMap((variant) => [...variant.pages]))].sort();
+  for (const [key, captured] of groupByKey(crawl.scripts)) {
+    // Every different body loaded from this script's URLs in this run (other query strings,
+    // or another page served something else), first seen first
+    const variants = distinctBodies(captured);
+    const pages = [...new Set(captured.flatMap((variant) => [...variant.pages]))].sort();
     const perRequest = isPerRequest(variants);
-    await store.writeBlob(script.sha256, script.body);
+    for (const variant of variants) {
+      await store.writeBlob(variant.sha256, variant.body);
+    }
+    const existing = state.scripts[key];
+    const first = variants.find((variant) => variant.sha256 === existing?.sha256) ?? variants[0]!;
 
-    const knownHost = state.hosts[script.host];
+    const knownHost = state.hosts[first.host];
     if (knownHost) {
       knownHost.lastSeen = at;
     } else {
-      state.hosts[script.host] = { firstSeen: at, lastSeen: at };
+      state.hosts[first.host] = { firstSeen: at, lastSeen: at };
       if (!baseline) {
-        detection.newHosts.push(script.host);
-        events.push({ at, type: 'new-host', host: script.host, url: script.url });
+        detection.newHosts.push(first.host);
+        events.push({ at, type: 'new-host', host: first.host, url: first.url });
       }
     }
-    const change = {
+    const changeOf = (script: CapturedScript) => ({
       key,
       url: script.url,
       host: script.host,
@@ -77,56 +81,87 @@ export async function applyCrawl(
       pages,
       newHost: !baseline && !knownHost,
       quietHost: matchesAny(script.host, config.hosts.quiet),
-    };
+    });
 
-    const existing = state.scripts[key];
     if (!existing) {
       state.scripts[key] = {
-        ...newRecord(script, pages, at),
+        ...newRecord(first, pages, at),
         ...(perRequest ? { perRequest: true } : {}),
       };
       if (!baseline) {
-        detection.changes.push({ ...change, kind: 'new' });
-        events.push({ at, type: 'new-script', key, url: script.url, sha256: script.sha256 });
+        detection.changes.push({ ...changeOf(first), kind: 'new' });
+        events.push({ at, type: 'new-script', key, url: first.url, sha256: first.sha256 });
       }
       continue;
     }
 
     existing.lastSeen = at;
-    existing.url = script.url;
+    existing.url = first.url;
     existing.pages = pages;
+    // Only a script known to vary is compared leniently: in the run that first shows
+    // different bodies, one of them may be a compromise that targets some pages
+    const knownToVary = existing.perRequest === true;
     if (perRequest && !existing.perRequest) {
       existing.perRequest = true;
       events.push({
         at,
         type: 'review-skipped',
         key,
-        url: script.url,
-        message: `Generated per request (${new Set(variants.map((variant) => variant.sha256)).size} different versions in one run), content changes are no longer reviewed`,
+        url: first.url,
+        message: `Generated per request (${variants.length} different versions in one run): changes are only reviewed when they add hosts or risky calls`,
+      });
+    } else if (!perRequest && existing.perRequest && pages.length > 1) {
+      // Several pages got the same body this time: the variation is gone, so every change
+      // is reviewed again
+      delete existing.perRequest;
+      events.push({
+        at,
+        type: 'review-skipped',
+        key,
+        url: first.url,
+        message: 'No longer generated per request: content changes are reviewed again',
       });
     }
-    const current = existing.versions.at(-1);
-    if (existing.sha256 === script.sha256) {
-      if (current) {
-        current.lastSeen = at;
-      }
-      continue;
-    }
 
-    if (await isNoise(existing, script, state, config, store)) {
-      detection.absorbed++;
-      existing.sha256 = script.sha256;
-      existing.size = script.body.length;
-      const known = existing.versions.find((version) => version.sha256 === script.sha256);
-      // Keep the version list to real versions: a per-request variant replaces the current
-      // entry's content instead of adding a version
-      const entry = known ?? current;
-      if (entry) {
-        entry.lastSeen = at;
-        if (!known) {
-          entry.sha256 = script.sha256;
-          entry.size = script.body.length;
-          entry.url = script.url;
+    // Check every body that differs from the recorded one: a compromise may target one page
+    let script: CapturedScript | undefined;
+    let absorbed: CapturedScript | undefined;
+    for (const variant of variants) {
+      if (variant.sha256 === existing.sha256) {
+        continue;
+      }
+      if (await isNoise(existing, variant, knownToVary, state, config, store)) {
+        absorbed ??= variant;
+      } else {
+        script = variant;
+        break;
+      }
+    }
+    const current = existing.versions.at(-1);
+
+    if (!script) {
+      if (absorbed && first.sha256 !== existing.sha256) {
+        detection.absorbed++;
+        existing.sha256 = absorbed.sha256;
+        existing.size = absorbed.body.length;
+        const known = existing.versions.find((version) => version.sha256 === absorbed.sha256);
+        // Keep the version list to real versions: a per-request variant replaces the current
+        // entry's content instead of adding a version
+        const entry = known ?? current;
+        if (entry) {
+          entry.lastSeen = at;
+          if (!known) {
+            entry.sha256 = absorbed.sha256;
+            entry.size = absorbed.body.length;
+            entry.url = absorbed.url;
+          }
+        }
+      } else {
+        if (absorbed) {
+          detection.absorbed++;
+        }
+        if (current) {
+          current.lastSeen = at;
         }
       }
       continue;
@@ -135,6 +170,7 @@ export async function applyCrawl(
     const oldSha256 = existing.sha256;
     existing.sha256 = script.sha256;
     existing.size = script.body.length;
+    existing.url = script.url;
     existing.lastChanged = at;
     existing.versions.push({
       sha256: script.sha256,
@@ -144,7 +180,7 @@ export async function applyCrawl(
       lastSeen: at,
     });
     existing.versions = existing.versions.slice(-config.retention.versionsPerScript);
-    detection.changes.push({ ...change, kind: 'changed', oldSha256 });
+    detection.changes.push({ ...changeOf(script), kind: 'changed', oldSha256 });
     events.push({ at, type: 'changed', key, url: script.url, sha256: script.sha256, oldSha256 });
   }
 
@@ -204,6 +240,28 @@ export function appendHistory(state: State, events: HistoryEvent[], limit: numbe
   }
 }
 
+/** One entry per different body, in the order they were captured. */
+/** No new host and no more of any risky call than before. */
+function addsNoRisk(oldCode: string, newCode: string): boolean {
+  const oldHosts = hostsInCode(oldCode);
+  if (![...hostsInCode(newCode)].every((host) => oldHosts.has(host))) {
+    return false;
+  }
+  const before = countIndicators(oldCode);
+  const after = countIndicators(newCode);
+  return Object.entries(after).every(([name, count]) => count <= (before[name] ?? 0));
+}
+
+function distinctBodies(captured: CapturedScript[]): CapturedScript[] {
+  const bySha = new Map<string, CapturedScript>();
+  for (const script of captured) {
+    if (!bySha.has(script.sha256)) {
+      bySha.set(script.sha256, script);
+    }
+  }
+  return [...bySha.values()];
+}
+
 function groupByKey(scripts: Map<string, CapturedScript>): Map<string, CapturedScript[]> {
   const groups = new Map<string, CapturedScript[]>();
   for (const script of scripts.values()) {
@@ -260,6 +318,7 @@ function newRecord(script: CapturedScript, pages: string[], at: string): ScriptR
 async function isNoise(
   existing: ScriptRecord,
   script: CapturedScript,
+  knownToVary: boolean,
   state: State,
   config: Config,
   store: DataStore,
@@ -270,8 +329,13 @@ async function isNoise(
     const review = known.reviewKey ? state.reviews[known.reviewKey] : undefined;
     return !review || review.verdict === 'benign';
   }
-  if (existing.perRequest) {
-    return true;
+  const previous = await store.readBlob(existing.sha256);
+  if (knownToVary) {
+    // Its content differs on every load, so only what a compromise needs is compared: hosts
+    // to talk to and risky calls
+    return (
+      previous !== undefined && addsNoRisk(previous.toString('utf8'), script.body.toString('utf8'))
+    );
   }
   if (
     matchesAny(script.url, config.hosts.ignoreContentChanges) ||
@@ -279,7 +343,6 @@ async function isNoise(
   ) {
     return true;
   }
-  const previous = await store.readBlob(existing.sha256);
   return (
     previous !== undefined &&
     isLiteralOnlyChange(previous.toString('utf8'), script.body.toString('utf8'))

