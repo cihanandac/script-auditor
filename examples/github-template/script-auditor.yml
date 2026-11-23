@@ -9,7 +9,7 @@ pages:
     name: Checkout
 
 # Your own domains, subdomains included. Their scripts are not audited.
-# Default: the last two labels of each page's host (example.com).
+# Default: the registrable domain of each page's host (www.example.co.uk -> example.co.uk).
 # firstPartyDomains: [example.com, example-cdn.net]
 
 consent:

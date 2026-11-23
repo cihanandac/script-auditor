@@ -106,7 +106,7 @@ ad-auction hosts to keep quiet.
 | Option                       | What it does                                                                     |
 | ---------------------------- | -------------------------------------------------------------------------------- |
 | `pages`                      | URLs to visit, optionally with a `name`. Pick one page per kind of embed.        |
-| `firstPartyDomains`          | Your domains; their scripts are not audited.                                     |
+| `firstPartyDomains`          | Your domains; their scripts are not audited. Default: each page's domain.        |
 | `consent.selector`           | The "accept all" button. Shadow DOM is pierced.                                  |
 | `hosts.quiet`                | Hosts (globs) that may appear without a new-host alert, e.g. ad bidders.         |
 | `hosts.ignoreContentChanges` | Script URLs (globs) whose content changes are not reviewed.                      |

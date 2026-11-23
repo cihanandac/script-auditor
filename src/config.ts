@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parse as parseYaml } from 'yaml';
+import { getDomain } from 'tldts';
 import { z } from 'zod';
 
 const pageSchema = z.union([
@@ -191,11 +192,12 @@ function defaultPageName(url: string): string {
 }
 
 /**
- * Last two labels of a host name (www.example.com -> example.com). Good enough as a
- * default; sites on multi-label public suffixes (example.co.uk) set firstPartyDomains.
+ * The registrable domain of a host name, from the Public Suffix List including private
+ * suffixes: www.example.com -> example.com, shop.example.co.uk -> example.co.uk,
+ * tenant.github.io -> tenant.github.io. IP addresses and single-label hosts stay as they are.
  */
 function baseDomain(host: string): string {
-  return host.split('.').slice(-2).join('.');
+  return getDomain(host, { allowPrivateDomains: true }) ?? host;
 }
 
 function unique<T>(values: T[]): T[] {

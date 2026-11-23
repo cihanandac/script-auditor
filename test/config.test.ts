@@ -13,6 +13,28 @@ describe('parseConfig', () => {
     expect(config.notify).toEqual([]);
   });
 
+  // The earlier default test only used example.com, where the last two labels happen to be
+  // the registrable domain.
+  it('derives first-party domains from the public suffix list', () => {
+    const config = parseConfig({
+      pages: [
+        'https://shop.example.co.uk/',
+        'https://tenant.github.io/',
+        'http://localhost:8080/',
+        'http://127.0.0.1/',
+      ],
+    });
+    expect(config.firstPartyDomains).toEqual([
+      'example.co.uk',
+      'tenant.github.io',
+      'localhost',
+      '127.0.0.1',
+    ]);
+    expect(isFirstParty('evil.co.uk', config.firstPartyDomains)).toBe(false);
+    expect(isFirstParty('attacker.github.io', config.firstPartyDomains)).toBe(false);
+    expect(isFirstParty('cdn.example.co.uk', config.firstPartyDomains)).toBe(true);
+  });
+
   it('accepts named pages and explicit first-party domains', () => {
     const config = parseConfig({
       pages: [{ url: 'https://shop.example.co.uk/cart', name: 'Cart' }, 'https://example.co.uk/'],
