@@ -21,6 +21,12 @@ inputs:
   fail-on-alert:
     description: Fail the step when the run raised alerts (GitHub then emails about the failed run).
     default: 'false'
+  readme:
+    description: >-
+      README to write the findings into, between <!-- script-auditor:start --> and
+      <!-- script-auditor:end -->. Committed to the branch the workflow runs on when they
+      change; needs contents write permission. Empty to turn it off.
+    default: ''
   node-version:
     description: Node.js version to run the auditor with.
     default: '24'
@@ -83,3 +89,20 @@ runs:
         else
           echo "The audit wrote no state, nothing to save"
         fi
+
+    # After saving: a README that cannot be pushed (branch protection) only warns
+    - name: Update README
+      if: always() && inputs.readme != '' && steps.restore.outcome == 'success' && github.ref_type == 'branch'
+      shell: bash
+      env:
+        README: ${{ inputs.readme }}
+        BRANCH: ${{ github.ref_name }}
+        CONFIG: ${{ inputs.config }}
+        DATA_DIR: ${{ runner.temp }}/script-auditor-data
+      run: |
+        if [ ! -f "$DATA_DIR/state.json" ]; then
+          echo "The audit wrote no state, README left unchanged"
+          exit 0
+        fi
+        "$GITHUB_ACTION_PATH/scripts/readme-commit.sh" "$BRANCH" "$README" \
+          node "$GITHUB_ACTION_PATH/dist/cli.js" readme --config "$CONFIG" --data-dir "$DATA_DIR" --readme

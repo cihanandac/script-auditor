@@ -24,6 +24,6 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm test
       - run: npm run build
-      - name: Check the data branch script
-        # Its behaviour is tested by test/data-branch.test.ts
-        run: bash -n scripts/data-branch.sh
+      - name: Check the shell scripts
+        # Their behaviour is tested by test/data-branch.test.ts and test/readme-commit.test.ts
+        run: bash -n scripts/data-branch.sh scripts/readme-commit.sh
