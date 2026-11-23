@@ -288,4 +288,48 @@ describe('applyCrawl', () => {
       { kind: 'changed', newSha256: sha256('widget();skim(document.forms)') },
     ]);
   });
+
+  // Earlier tests checked what was detected, not which bytes each recorded verdict points at
+  // after a rollback, so a verdict could silently move to other content.
+  it('keeps verdicts on their own bytes through a rollback and literal changes', async () => {
+    const url = 'https://cdn.vendor.example/w.js';
+    const key = scriptKey(url);
+    const a = 'widget({t:1795188732494})';
+    const b = 'widget();skim()';
+    const a2 = 'widget({t:1795188744143})';
+    const flag = (sha: string, verdict: 'benign' | 'malicious') => {
+      const reviewKey = `test:${sha}`;
+      state.reviews[reviewKey] = {
+        verdict,
+        confidence: 1,
+        summary: '',
+        reasons: [],
+        provider: 'test',
+        model: 'test',
+        reviewedAt: '',
+      };
+      state.scripts[key]!.versions.find((version) => version.sha256 === sha)!.reviewKey = reviewKey;
+    };
+    const versions = () =>
+      state.scripts[key]!.versions.map((version) => [version.sha256, version.reviewKey]);
+
+    await run([{ url, body: a }], day(1));
+    flag(sha256(a), 'benign');
+    await run([{ url, body: b }], day(2));
+    flag(sha256(b), 'malicious');
+    await run([{ url, body: a }], day(3)); // rollback to the known benign version
+    expect(state.scripts[key]!.sha256).toBe(sha256(a));
+    expect(versions().at(-1)).toEqual([sha256(a), `test:${sha256(a)}`]);
+
+    await run([{ url, body: a }], day(4));
+    expect(state.scripts[key]!.versions.at(-1)!.lastSeen).toBe(day(4).toISOString());
+
+    await run([{ url, body: a2 }], day(5)); // only a timestamp differs
+    expect(state.scripts[key]!.sha256).toBe(sha256(a2));
+    expect(versions()).toEqual([
+      [sha256(b), `test:${sha256(b)}`],
+      [sha256(a), `test:${sha256(a)}`],
+      [sha256(a2), undefined],
+    ]);
+  });
 });

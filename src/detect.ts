@@ -137,31 +137,21 @@ export async function applyCrawl(
         break;
       }
     }
-    const current = existing.versions.at(-1);
-
     if (!script) {
-      if (absorbed && first.sha256 !== existing.sha256) {
+      if (absorbed) {
         detection.absorbed++;
+      }
+      if (absorbed && first.sha256 !== existing.sha256) {
+        const previous = existing.sha256;
         existing.sha256 = absorbed.sha256;
         existing.size = absorbed.body.length;
-        const known = existing.versions.find((version) => version.sha256 === absorbed.sha256);
-        // Keep the version list to real versions: a per-request variant replaces the current
-        // entry's content instead of adding a version
-        const entry = known ?? current;
+        recordAbsorbed(existing, previous, absorbed, at);
+      } else {
+        // The version list is ordered by when each version was last current; look the
+        // current one up by its hash rather than trusting the order
+        const entry = existing.versions.findLast((version) => version.sha256 === existing.sha256);
         if (entry) {
           entry.lastSeen = at;
-          if (!known) {
-            entry.sha256 = absorbed.sha256;
-            entry.size = absorbed.body.length;
-            entry.url = absorbed.url;
-          }
-        }
-      } else {
-        if (absorbed) {
-          detection.absorbed++;
-        }
-        if (current) {
-          current.lastSeen = at;
         }
       }
       continue;
@@ -241,6 +231,40 @@ export function appendHistory(state: State, events: HistoryEvent[], limit: numbe
 }
 
 /** One entry per different body, in the order they were captured. */
+/**
+ * Records an absorbed body as the script's current version, keeping the list ordered so
+ * the current version is last. A version that comes back moves to the end. A new variant
+ * (numbers or ids changed) replaces the current entry, unless that entry was reviewed: a
+ * reviewed hash keeps its verdict and never takes other content.
+ */
+function recordAbsorbed(
+  existing: ScriptRecord,
+  previousSha256: string,
+  script: CapturedScript,
+  at: string,
+): void {
+  const versions = existing.versions;
+  const knownIndex = versions.findLastIndex((version) => version.sha256 === script.sha256);
+  if (knownIndex >= 0) {
+    const [known] = versions.splice(knownIndex, 1);
+    known!.lastSeen = at;
+    versions.push(known!);
+    return;
+  }
+  const currentIndex = versions.findLastIndex((version) => version.sha256 === previousSha256);
+  const current = versions[currentIndex];
+  if (current && !current.reviewKey) {
+    versions.splice(currentIndex, 1);
+  }
+  versions.push({
+    sha256: script.sha256,
+    size: script.body.length,
+    url: script.url,
+    firstSeen: current && !current.reviewKey ? current.firstSeen : at,
+    lastSeen: at,
+  });
+}
+
 /** No new host and no more of any risky call than before. */
 function addsNoRisk(oldCode: string, newCode: string): boolean {
   const oldHosts = hostsInCode(oldCode);
