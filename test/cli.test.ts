@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -22,7 +22,8 @@ describe('cli', () => {
   it('prints help and version', async () => {
     expect(await main(['--help'])).toBe(0);
     expect(await main(['--version'])).toBe(0);
-    expect(console.log).toHaveBeenCalledWith('0.1.0');
+    const { version } = JSON.parse(await readFile('package.json', 'utf8')) as { version: string };
+    expect(console.log).toHaveBeenCalledWith(version);
   });
 
   it('exits with 2 on usage and configuration problems', async () => {

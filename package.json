@@ -1,6 +1,6 @@
 {
   "name": "script-auditor",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Watches the third-party JavaScript your pages load, reviews every change with an LLM and alerts on suspicious ones.",
   "license": "UNLICENSED",
   "private": true,
