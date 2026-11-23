@@ -210,30 +210,68 @@ function excerptOfCode(code: string, maxChars: number): { text: string; omitted:
   if (code.length <= maxChars) {
     return { text: code, omitted: '' };
   }
-  // The start of the file plus the surroundings of every risky spot, in file order
-  const ranges: [number, number][] = [[0, Math.floor(maxChars * 0.25)]];
+  // A window around every risky spot and URL, scored by how many risky spots it covers.
+  // Windows are picked by score, not merged first: in dense code merging would produce one
+  // range larger than the whole budget.
   const radius = 600;
+  const spots: { index: number; weight: number }[] = [];
   for (const { pattern } of INDICATORS) {
     for (const match of code.matchAll(pattern)) {
-      ranges.push([Math.max(0, match.index - radius), match.index + match[0].length + radius]);
+      spots.push({ index: match.index, weight: 3 });
     }
   }
   for (const match of code.matchAll(/(?:https?:)?\/\/[a-z0-9.-]+\.[a-z]{2,}/gi)) {
-    ranges.push([Math.max(0, match.index - radius), match.index + match[0].length + radius]);
+    spots.push({ index: match.index, weight: 2 });
   }
-  const merged = mergeRanges(ranges);
-  const parts: string[] = [];
-  let used = 0;
-  let shown = 0;
-  for (const [start, end] of merged) {
-    const piece = code.slice(start, Math.min(end, code.length));
-    if (used + piece.length > maxChars) {
+  spots.sort((a, b) => a.index - b.index);
+  // Sliding window over the sorted spots: the weight of all spots within each window
+  let low = 0;
+  let high = 0;
+  let weight = 0;
+  const windows = spots.map(({ index }) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(code.length, index + radius);
+    while (high < spots.length && spots[high]!.index < end) {
+      weight += spots[high++]!.weight;
+    }
+    while (spots[low]!.index < start) {
+      weight -= spots[low++]!.weight;
+    }
+    return { start, end, score: weight };
+  });
+  windows.sort((a, b) => b.score - a.score || a.start - b.start);
+
+  // The start of the file first, then the best windows until the budget is spent
+  const chosen: [number, number][] = [[0, Math.floor(maxChars * 0.25)]];
+  let used = chosen[0]![1];
+  for (const window of windows) {
+    if (used >= maxChars) {
+      break;
+    }
+    // Only the part not shown yet, cut to the remaining budget
+    let { start, end } = window;
+    for (const [shownStart, shownEnd] of chosen) {
+      if (start < shownEnd && end > shownStart) {
+        if (start >= shownStart) {
+          start = Math.max(start, shownEnd);
+        } else {
+          end = Math.min(end, shownStart);
+        }
+      }
+    }
+    end = Math.min(end, start + (maxChars - used));
+    if (end - start < 100) {
       continue;
     }
-    parts.push(start === 0 ? piece : `/* ... offset ${start} ... */\n${piece}`);
-    used += piece.length;
-    shown += piece.length;
+    chosen.push([start, end]);
+    used += end - start;
   }
+
+  const parts = mergeRanges(chosen).map(([start, end]) => {
+    const piece = code.slice(start, end);
+    return start === 0 ? piece : `/* ... offset ${start} ... */\n${piece}`;
+  });
+  const shown = mergeRanges(chosen).reduce((sum, [start, end]) => sum + end - start, 0);
   const percent = Math.round((shown / code.length) * 100);
   return {
     text: parts.join('\n'),
@@ -261,8 +299,19 @@ function excerptOfHunks(
   });
   const chosen: typeof scored = [];
   let used = 0;
+  let truncated = false;
   for (const hunk of [...scored].sort((a, b) => b.score - a.score || a.index - b.index)) {
-    if (used + hunk.text.length > maxChars) {
+    const remaining = maxChars - used;
+    if (hunk.text.length > remaining) {
+      // A segment of long lines can exceed the whole budget: show its start rather than
+      // nothing, at least for the riskiest one
+      if (chosen.length > 0 || remaining < 500) {
+        continue;
+      }
+      const marker = '\n/* ... rest of this segment left out for size ... */';
+      chosen.push({ ...hunk, text: hunk.text.slice(0, remaining - marker.length) + marker });
+      used = maxChars;
+      truncated = true;
       continue;
     }
     chosen.push(hunk);
@@ -271,9 +320,9 @@ function excerptOfHunks(
   chosen.sort((a, b) => a.index - b.index);
   const text = chosen.map((hunk) => hunk.text).join('\n');
   const omitted =
-    chosen.length === scored.length
+    chosen.length === scored.length && !truncated
       ? ''
-      : `${scored.length - chosen.length} of ${scored.length} diff hunks are left out for size; the riskiest ones are shown.`;
+      : `${scored.length - chosen.length} of ${scored.length} diff hunks are left out for size${truncated ? ', and the riskiest one is cut short' : ''}; the riskiest ones are shown.`;
   return { text, omitted };
 }
 
