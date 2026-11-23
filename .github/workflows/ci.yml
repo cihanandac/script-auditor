@@ -25,4 +25,5 @@ jobs:
       - run: npm test
       - run: npm run build
       - name: Check the data branch script
+        # Its behaviour is tested by test/data-branch.test.ts
         run: bash -n scripts/data-branch.sh
