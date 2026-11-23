@@ -84,6 +84,8 @@ over the following runs.
 
    The site is also attached to every run as the `status-site` artifact.
 
+6. Optional: show the findings in your README, as described in the next section.
+
 The workflow runs hourly. The auditor keeps its data on the `script-auditor-data` branch.
 That branch is rewritten on every run (always one commit), so it doesn't grow.
 
@@ -94,6 +96,35 @@ A run of 26 pages takes about 75 seconds of crawling, and 3 to 4 minutes on a Gi
 runner including installing Chromium. Public repositories get Actions minutes for free.
 Private ones on the free plan get 2,000 minutes a month, so run every 2 or 3 hours there
 (`cron: '17 */2 * * *'`) or audit fewer pages.
+
+### Findings in your README
+
+The action can write the scripts that need attention into your repository's README, as
+a table with each script's verdict, the pages that load it and the reason. Problems are
+listed too: failed reviews, pages that could not be scanned, a consent banner that was not
+accepted.
+
+1. Add these two lines to the README where the section should go:
+
+   ```markdown
+   <!-- script-auditor:start -->
+   <!-- script-auditor:end -->
+   ```
+
+2. Set `readme: README.md` on the action.
+
+The section has no timestamps or counters, so it changes, and is committed by
+`github-actions[bot]`, only when the findings change. It is pushed to the branch the
+workflow runs on. If that is not possible (branch protection, or someone pushed three times
+in a row), the run only shows a warning; the audit data is saved before.
+
+Text in the section comes from script URLs and from the model, which a compromised script
+can steer. It is escaped so it cannot add links, HTML or @mentions.
+
+Keep in mind that the README is as visible as the repository: in a public repository,
+everyone can see which of your scripts look compromised.
+
+Locally, or in other CI systems: `node dist/cli.js readme --readme README.md`.
 
 ## Configuration
 

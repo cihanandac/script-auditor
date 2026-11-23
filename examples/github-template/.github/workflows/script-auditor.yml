@@ -30,7 +30,8 @@ jobs:
     outputs:
       pages-ready: ${{ steps.pages-artifact.outcome == 'success' }}
     permissions:
-      # The audit data is kept on the script-auditor-data branch
+      # The audit data is kept on the script-auditor-data branch (and the README, if
+      # enabled, is committed to the branch the workflow runs on)
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,6 +40,9 @@ jobs:
       - uses: cihanandac/script-auditor@main
         with:
           config: script-auditor.yml
+          # Write the findings into README.md, between <!-- script-auditor:start --> and
+          # <!-- script-auditor:end -->, and commit it when they change
+          # readme: README.md
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
