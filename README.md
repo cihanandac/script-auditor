@@ -158,9 +158,10 @@ Exit codes:
 - **It's one layer of defence.** Skimmers can hide from automated browsers or only target
   checkout pages, and a model can be wrong. Audit the pages that matter, such as login and
   checkout, and combine the auditor with a CSP.
-- **Literal-only changes are trusted.** A change where only numbers and long ID-like tokens
-  (16+ characters) differ, and no new host appears, is not reviewed. Short IDs, such as
-  analytics property IDs, are still compared.
+- **Literal-only changes are trusted.** A change where only numbers, hex hashes and long
+  ID-like tokens (16+ characters) differ, and no new host appears, is not reviewed.
+  Tracking IDs such as `UA-12345-1`, `G-ABC123`, `AW-123456789` and quoted pixel IDs are
+  still compared, because swapping one sends the data to someone else's account.
 - **Script code is treated as untrusted input to the LLM.** The prompt fences it and tells
   the model to ignore instructions planted in it. OpenAI requests are sent with
   `store: false`.

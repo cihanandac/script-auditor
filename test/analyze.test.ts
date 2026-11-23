@@ -52,10 +52,22 @@ describe('normalizeLiterals', () => {
     expect(normalizeLiterals('x="deadbeefcafe"')).toBe('x="deadbeefcafe"');
   });
 
-  it('keeps short ids such as analytics property ids distinguishable', () => {
-    expect(normalizeLiterals('gtag("config","G-ABC123XY")')).not.toBe(
-      normalizeLiterals('gtag("config","G-ZZZ999QQ")'),
-    );
+  // The earlier test only swapped ids that differ in letters, which survived anyway. Ids
+  // made of digits or hex characters were normalized away.
+  it.each([
+    ['ga("create","UA-12345-1")', 'ga("create","UA-56789-1")'],
+    ['gtag("config","G-ABC123DEF")', 'gtag("config","G-ABC456DEF")'],
+    ['gtag("config","AW-123456789")', 'gtag("config","AW-987654321")'],
+    ['gtm("GTM-K12AB")', 'gtm("GTM-K98AB")'],
+    ["fbq('init','123456789012345')", "fbq('init','987654321098765')"],
+    ['gtag("config","G-ABC123XY")', 'gtag("config","G-ZZZ999QQ")'],
+  ])('keeps tracking ids distinguishable: %s', (a, b) => {
+    expect(normalizeLiterals(a)).not.toBe(normalizeLiterals(b));
+  });
+
+  it('still equalizes quoted timestamps', () => {
+    expect(normalizeLiterals('x("1795188732494")')).toBe(normalizeLiterals('x("1795188744143")'));
+    expect(normalizeLiterals("x('1795188732')")).toBe(normalizeLiterals("x('1795188744')"));
   });
 });
 
@@ -92,6 +104,15 @@ describe('analyze', () => {
     });
     expect(analysis.excerpt).toMatch(/^\+.*addEventListener\("submit"/m);
     expect(analysis.excerpt).toMatch(/^\+.*cdn-analytics\.evil\.example/m);
+  });
+
+  it('does not trust a swapped tracking id as a literal-only change', async () => {
+    const analysis = await analyze(
+      Buffer.from('ga("create","UA-56789-1","auto");ga("send","pageview");'),
+      Buffer.from('ga("create","UA-12345-1","auto");ga("send","pageview");'),
+      50_000,
+    );
+    expect(analysis.literalOnly).toBe(false);
   });
 
   it('marks changes of literal values only', async () => {

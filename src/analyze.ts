@@ -186,14 +186,31 @@ export function isLiteralOnlyChange(oldCode: string, newCode: string): boolean {
 }
 
 /**
+ * Account and property ids of analytics and ad vendors: "UA-12345-1", "G-ABC123DEF",
+ * "AW-123456789", "GTM-K12AB", and quoted all-digit ids such as Facebook pixel ids. Swapping
+ * one sends the data to someone else's account, so they are never normalized. Quoted Unix
+ * timestamps (10 or 13 digits) are not ids.
+ */
+const TRACKING_ID =
+  /\b[A-Z]{1,5}-[A-Z0-9]{3,}(?:-[A-Z0-9]+)*\b|(['"`])(?!1[5-9]\d{8}(?:\d{3})?\1)\d{8,20}\1/g;
+
+/**
  * Replaces numbers, hex hashes and long id-like tokens, the parts that change on every
  * request or deployment (timestamps, cache keys, request ids, build and commit hashes).
+ * Tracking ids are kept as they are.
  */
 export function normalizeLiterals(code: string): string {
-  return code
+  const kept: string[] = [];
+  const protectedCode = code.replace(TRACKING_ID, (id) => {
+    kept.push(id);
+    return '\u0000';
+  });
+  let next = 0;
+  return protectedCode
     .replace(/\b[A-Za-z0-9_-]*\d[A-Za-z0-9_-]*\b/g, (token) => (token.length >= 16 ? 'ID' : token))
     .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/gi, 'HEX')
-    .replace(/\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi, '0');
+    .replace(/\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/gi, '0')
+    .replace(/\u0000/g, () => kept[next++]!);
 }
 
 export async function beautify(code: string): Promise<string> {
