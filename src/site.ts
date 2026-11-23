@@ -50,7 +50,7 @@ export async function buildSite(state: State, config: Config, outDir: string): P
 export const pageId = (url: string) => shortId(url);
 export const scriptId = (key: string) => shortId(key);
 
-class SiteModel {
+export class SiteModel {
   readonly pages: PageRecord[];
   readonly scripts: ScriptRecord[];
 

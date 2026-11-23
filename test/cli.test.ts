@@ -40,6 +40,22 @@ describe('cli', () => {
     }
     expect(await main(['frobnicate', '--config', config])).toBe(2);
   });
+  it('writes the findings into a README with markers', async () => {
+    const config = join(dir, 'readme.yml');
+    const readme = join(dir, 'README.md');
+    await writeFile(config, 'pages:\n  - url: https://www.example.com/\n');
+    await writeFile(readme, '# X\n<!-- script-auditor:start -->\n<!-- script-auditor:end -->\n');
+    const args = ['readme', '-c', config, '-d', join(dir, 'no-data'), '--readme', readme];
+    expect(await main(args)).toBe(0);
+    expect(await readFile(readme, 'utf8')).toContain('Not audited yet');
+
+    await writeFile(readme, '# No markers\n');
+    expect(await main(args)).toBe(0);
+    expect(await readFile(readme, 'utf8')).toBe('# No markers\n');
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringMatching(/no <!-- script-auditor:start -->/),
+    );
+  });
 });
 
 describe('formatSummary', () => {

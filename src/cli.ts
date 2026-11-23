@@ -15,6 +15,7 @@ import { crawl } from './crawl.js';
 import { log } from './log.js';
 import { createNotifiers } from './notify/index.js';
 import { createReviewer } from './review/index.js';
+import { README_END, README_START, renderReadmeSection, updateReadme } from './readme.js';
 import { assertSomePageScanned, runAudit } from './run.js';
 import { buildSite } from './site.js';
 import { DataStore } from './state.js';
@@ -28,11 +29,14 @@ Commands:
               send notifications. (default)
   inventory   Crawl once and print the third-party scripts of every page. Stores nothing.
   site        Rebuild the status site from the data directory.
+  readme      Write the findings into a README, between the lines
+              <!-- script-auditor:start --> and <!-- script-auditor:end -->.
 
 Options:
   -c, --config <file>     Configuration file (default: script-auditor.yml)
   -d, --data-dir <dir>    Where state and script bodies are kept (default: .script-auditor-data)
   -s, --site-dir <dir>    Where the status site is written (default: site)
+      --readme <file>     README the readme command updates (default: README.md)
       --dry-run           Print notifications instead of sending them
       --fail-on-alert     Exit with code 3 when the run raised alerts
   -v, --verbose           More logging
@@ -51,6 +55,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         config: { type: 'string', short: 'c', default: 'script-auditor.yml' },
         'data-dir': { type: 'string', short: 'd', default: '.script-auditor-data' },
         'site-dir': { type: 'string', short: 's', default: 'site' },
+        readme: { type: 'string', default: 'README.md' },
         'dry-run': { type: 'boolean', default: false },
         'fail-on-alert': { type: 'boolean', default: false },
         verbose: { type: 'boolean', short: 'v', default: false },
@@ -95,6 +100,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         const state = await new DataStore(values['data-dir']).load(new Date());
         await buildSite(state, config, values['site-dir']);
         log.info(`Status site written to ${values['site-dir']}`);
+        return 0;
+      }
+      case 'readme': {
+        const state = await new DataStore(values['data-dir']).load(new Date());
+        const result = await updateReadme(values.readme, renderReadmeSection(state, config));
+        if (result === 'no-markers') {
+          log.warn(
+            `${values.readme} has no ${README_START} and ${README_END} lines, left unchanged`,
+          );
+        } else {
+          log.info(`${values.readme} ${result}`);
+        }
         return 0;
       }
       default:
