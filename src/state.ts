@@ -36,6 +36,8 @@ export interface ScriptVersion {
   lastSeen: string;
   /** Key into State.reviews once this version has been reviewed. */
   reviewKey?: string;
+  /** Set when every attempt to review this version failed: when, and the last error. */
+  reviewFailed?: { at: string; message: string };
 }
 
 export interface ScriptRecord {

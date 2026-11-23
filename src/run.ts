@@ -112,11 +112,14 @@ export function assertSomePageScanned(crawl: CrawlResult): void {
 /**
  * Scripts none of whose versions was ever reviewed, as new ones, for `llm.reviewBaseline`.
  * Covers the baseline of the first run and scripts recorded before the option was turned
- * on. Per-request scripts are left out: their body differs on every run.
+ * on. Per-request scripts are left out: their body differs on every run. So are scripts
+ * whose review failed for good: retrying them on every run would only repeat the error.
  */
 export function unreviewedScripts(state: State): Detection['changes'] {
   const unreviewed = Object.values(state.scripts).filter(
-    (script) => !script.perRequest && !script.versions.some((version) => version.reviewKey),
+    (script) =>
+      !script.perRequest &&
+      !script.versions.some((version) => version.reviewKey || version.reviewFailed),
   );
   return unreviewed.map((script) => ({
     kind: 'new' as const,

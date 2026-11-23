@@ -121,6 +121,14 @@ export async function processQueue(
       if (item.attempts < MAX_ATTEMPTS) {
         waiting.push(item);
       } else {
+        // Remembered on the version, so the status site shows it as not reviewed and
+        // reviewBaseline does not queue it again on every run
+        const version = state.scripts[item.key]?.versions.findLast(
+          (candidate) => candidate.sha256 === item.newSha256,
+        );
+        if (version) {
+          version.reviewFailed = { at, message: shortError(error) };
+        }
         appendHistory(
           state,
           [{ at, type: 'error', url: item.url, message }],

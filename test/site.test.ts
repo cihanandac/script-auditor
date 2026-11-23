@@ -128,7 +128,7 @@ describe('buildSite', () => {
     expect(script).not.toContain('<script>alert(1)</script>');
     expect(script).toContain('Posts form data to &quot;x.evil.example&quot;');
     expect(script).toContain('95% confidence');
-    expect(await read(`scripts/${scriptId(GOOD)}.html`)).toContain('baseline');
+    expect(await read(`scripts/${scriptId(GOOD)}.html`)).toContain('not reviewed');
   });
 
   it('exports the data as JSON', async () => {
@@ -138,5 +138,28 @@ describe('buildSite', () => {
       'malicious',
     );
     expect(data.pages[0].id).toBe(pageId(HOME));
+  });
+});
+
+// Earlier tests had no failed review, so a script whose review failed for good looked like
+// an untouched baseline script, and the overview said "no findings".
+describe('buildSite with a failed review', () => {
+  it('shows the failure on the script and on the overview', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'script-auditor-site-'));
+    try {
+      const state = fixture();
+      delete state.scripts[BAD];
+      state.pages[HOME]!.scriptKeys = [GOOD];
+      state.scripts[GOOD]!.versions[0]!.reviewFailed = { at: '', message: 'HTTP 429 rate limited' };
+      await buildSite(state, parseConfig({ pages: [HOME] }), dir);
+      const index = await readFile(join(dir, 'index.html'), 'utf8');
+      expect(index).toContain('1 review failed');
+      expect(index).not.toContain('no findings');
+      const script = await readFile(join(dir, 'scripts', `${scriptId(GOOD)}.html`), 'utf8');
+      expect(script).toContain('review failed');
+      expect(script).toContain('HTTP 429 rate limited');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

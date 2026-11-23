@@ -13,7 +13,14 @@ import { join } from 'node:path';
 import type { Config } from './config.js';
 import { matchesAny } from './config.js';
 import { shortId } from './script-key.js';
-import type { HistoryEvent, PageRecord, Review, ScriptRecord, State } from './state.js';
+import type {
+  HistoryEvent,
+  PageRecord,
+  Review,
+  ScriptRecord,
+  ScriptVersion,
+  State,
+} from './state.js';
 import { VERDICT_RANK } from './state.js';
 
 export async function buildSite(state: State, config: Config, outDir: string): Promise<void> {
@@ -61,7 +68,7 @@ class SiteModel {
 
   /** Review of the script's current version, if it has one. */
   currentReview(script: ScriptRecord): Review | undefined {
-    const version = script.versions.findLast((candidate) => candidate.sha256 === script.sha256);
+    const version = currentVersion(script);
     return version?.reviewKey ? this.state.reviews[version.reviewKey] : undefined;
   }
 
@@ -69,6 +76,11 @@ class SiteModel {
     return this.state.pending.some(
       (item) => item.key === script.key && item.newSha256 === script.sha256,
     );
+  }
+
+  /** Scripts whose current version could not be reviewed. */
+  reviewFailures(): ScriptRecord[] {
+    return this.scripts.filter((script) => currentVersion(script)?.reviewFailed);
   }
 
   /** Scripts whose current version is flagged. */
@@ -100,6 +112,7 @@ function renderIndex(site: SiteModel): string {
   const { state } = site;
   const attention = site.attention();
   const failedPages = site.pages.filter((page) => page.error);
+  const failedReviews = site.reviewFailures();
   const hosts = Object.entries(state.hosts)
     .map(([host, record]) => ({
       host,
@@ -112,10 +125,15 @@ function renderIndex(site: SiteModel): string {
   const status =
     attention.length > 0
       ? badge('alert', `${attention.length} need${attention.length === 1 ? 's' : ''} attention`)
-      : failedPages.length > 0 ||
-          (state.lastRun?.consentConfigured && !state.lastRun.consentAccepted)
-        ? badge('warn', 'run had problems')
-        : badge('ok', 'no findings');
+      : failedReviews.length > 0
+        ? badge(
+            'warn',
+            `${failedReviews.length} review${failedReviews.length === 1 ? '' : 's'} failed`,
+          )
+        : failedPages.length > 0 ||
+            (state.lastRun?.consentConfigured && !state.lastRun.consentAccepted)
+          ? badge('warn', 'run had problems')
+          : badge('ok', 'no findings');
 
   const body = `
 <header>
@@ -326,14 +344,24 @@ function eventDetail(site: SiteModel, event: HistoryEvent, root: string): string
 }
 
 function reviewCell(site: SiteModel, script: ScriptRecord): string {
-  if (script.perRequest) {
-    return badge('muted', 'generated per request, not reviewed');
-  }
   const review = site.currentReview(script);
+  const perRequest = script.perRequest ? ` ${badge('muted', 'generated per request')}` : '';
   if (review) {
-    return `${verdictBadge(review)} <span class="small">${esc(review.summary)}</span>`;
+    return `${verdictBadge(review)}${perRequest} <span class="small">${esc(review.summary)}</span>`;
   }
-  return site.isPending(script) ? badge('muted', 'review queued') : badge('muted', 'baseline');
+  const failed = currentVersion(script)?.reviewFailed;
+  if (failed) {
+    return `${badge('warn', 'review failed')}${perRequest} <span class="small">${esc(failed.message)}</span>`;
+  }
+  if (site.isPending(script)) {
+    return `${badge('muted', 'review queued')}${perRequest}`;
+  }
+  // Recorded by the baseline, while the LLM was off, or as a per-request variant
+  return `${badge('muted', 'not reviewed')}${perRequest}`;
+}
+
+function currentVersion(script: ScriptRecord): ScriptVersion | undefined {
+  return script.versions.findLast((candidate) => candidate.sha256 === script.sha256);
 }
 
 function scriptLink(script: ScriptRecord, root: string): string {

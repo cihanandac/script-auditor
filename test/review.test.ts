@@ -10,6 +10,7 @@ import { OpenAIReviewer } from '../src/review/openai.js';
 import { buildUserPrompt, SYSTEM_PROMPT } from '../src/review/prompt.js';
 import { enqueue, processQueue, pruneReviews } from '../src/review/queue.js';
 import type { ReviewRequest, ReviewResult, Reviewer } from '../src/review/types.js';
+import { unreviewedScripts } from '../src/run.js';
 import { sha256 } from '../src/script-key.js';
 import { DataStore, emptyState, type State } from '../src/state.js';
 
@@ -233,6 +234,12 @@ describe('review queue', () => {
     }
     expect(state.pending).toEqual([]);
     expect(state.history.at(-1)).toMatchObject({ type: 'error' });
+    // The failure stays on the version: the site can show it, and reviewBaseline does not
+    // queue the script again on every run
+    expect(state.scripts['https://a.example/x.js']!.versions[0]!.reviewFailed).toMatchObject({
+      message: expect.stringContaining('rate limited'),
+    });
+    expect(unreviewedScripts(state)).toEqual([]);
   });
 
   it('judges literal-only changes without calling the model', async () => {
