@@ -8,7 +8,7 @@
  *
  * Plain HTML and CSS, no JavaScript, so it can be hosted anywhere (GitHub/GitLab Pages).
  */
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Config } from './config.js';
 import { matchesAny } from './config.js';
@@ -23,8 +23,11 @@ import type {
 } from './state.js';
 import { VERDICT_RANK } from './state.js';
 
+/** Everything buildSite writes; it only ever deletes these. */
+const SITE_ENTRIES = new Set(['index.html', 'pages', 'scripts', 'data.json', '.nojekyll']);
+
 export async function buildSite(state: State, config: Config, outDir: string): Promise<void> {
-  await rm(outDir, { recursive: true, force: true });
+  await clearSite(outDir);
   await mkdir(join(outDir, 'pages'), { recursive: true });
   await mkdir(join(outDir, 'scripts'), { recursive: true });
   const site = new SiteModel(state, config);
@@ -341,6 +344,32 @@ function eventDetail(site: SiteModel, event: HistoryEvent, root: string): string
     parts.push(`<span class="muted">${esc(event.message)}</span>`);
   }
   return parts.join('<br>');
+}
+
+/**
+ * Removes the previous site. Refuses a directory holding anything else, such as the audit
+ * data or a docs folder, rather than deleting it.
+ */
+async function clearSite(outDir: string): Promise<void> {
+  let entries: string[];
+  try {
+    entries = await readdir(outDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  }
+  const foreign = entries.filter((entry) => !SITE_ENTRIES.has(entry));
+  if (foreign.length > 0) {
+    const listed = foreign.slice(0, 5).join(', ') + (foreign.length > 5 ? ', ...' : '');
+    throw new Error(
+      `The site directory ${outDir} contains files the status site did not write (${listed}). Use an empty or new directory for the site.`,
+    );
+  }
+  for (const entry of entries) {
+    await rm(join(outDir, entry), { recursive: true, force: true });
+  }
 }
 
 function reviewCell(site: SiteModel, script: ScriptRecord): string {

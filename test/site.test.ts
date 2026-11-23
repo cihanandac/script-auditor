@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -158,6 +158,31 @@ describe('buildSite with a failed review', () => {
       const script = await readFile(join(dir, 'scripts', `${scriptId(GOOD)}.html`), 'utf8');
       expect(script).toContain('review failed');
       expect(script).toContain('HTTP 429 rate limited');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Earlier tests always wrote the site to a fresh directory, so deleting the whole directory
+// first never showed up as a problem.
+describe('buildSite output directory', () => {
+  it('replaces its own earlier output but refuses a directory with other files', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'script-auditor-site-'));
+    try {
+      const config = parseConfig({ pages: [HOME] });
+      const site = join(dir, 'site');
+      await buildSite(fixture(), config, site);
+      await buildSite(fixture(), config, site);
+      expect(await readdir(site)).toContain('index.html');
+
+      const data = join(dir, 'data');
+      await mkdir(join(data, 'blobs'), { recursive: true });
+      await writeFile(join(data, 'state.json'), '{}');
+      await expect(buildSite(fixture(), config, data)).rejects.toThrow(
+        /did not write \(blobs, state\.json\)/,
+      );
+      expect((await readdir(data)).sort()).toEqual(['blobs', 'state.json']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
